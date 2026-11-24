@@ -1,0 +1,20 @@
+{
+  "name": "@agent-colab/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "agent-colab": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@agent-colab/adapters": "*",
+    "@agent-colab/core": "*",
+    "@agent-colab/server": "*",
+    "@agent-colab/tunnel": "*",
+    "@clack/prompts": "^0.10.1",
+    "commander": "^13.1.0"
+  }
+}

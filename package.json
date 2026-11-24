@@ -1,0 +1,28 @@
+{
+  "name": "agent-colab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-source, private-first centralized AI agent context, collaboration, and skill-sync hub.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "npm run build -w @agent-colab/core && npm run build -w @agent-colab/adapters && npm run build -w @agent-colab/tunnel && npm run build -w @agent-colab/server && npm run build -w @agent-colab/cli && npm run build -w @agent-colab/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:server": "npm run dev -w @agent-colab/server",
+    "dev:web": "npm run dev -w @agent-colab/web",
+    "typecheck": "tsc -b packages/core packages/adapters packages/tunnel packages/server packages/cli"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  }
+}

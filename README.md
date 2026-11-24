@@ -1,0 +1,80 @@
+# Agent Colab
+
+**Open-source, private-first centralized hub for AI agent context, collaboration, skill/config sync, and opt-in workspace coding.**
+
+Stop re-explaining your project context every time you switch AI tools (**Antigravity**, **Hermes Agent**, **Claude Chat**, **Gemini Web**, etc.). Agent Colab runs inside your private network (local PC, VM, home server, or VPS) and connects all your agents via **MCP (Model Context Protocol)** with an on-demand public tunnel when web AI tools need temporary access.
+
+---
+
+## What It Does
+
+- **Centralized Context & Memory**: Stores user profile, global rules, project contexts, and technical decisions in Git-friendly Markdown + YAML, indexed automatically with **SQLite FTS5** (`node:sqlite`, zero native compilation).
+- **Agent-to-Agent Collaboration**: Shared task board with agent locking (`claim_task`) and structured handoff notes (`leave_handoff_note`) so agents can continue each other's work seamlessly.
+- **Skill & MCP Config Sync**: Import/export `SKILL.md` bundles and MCP configs between **Antigravity** and **Hermes Agent** with dry-run previews, automatic secret redaction (`${ENV_VAR}`), and `.bak` config backups.
+- **Opt-In Workspace Coding (23 MCP Tools)**: Give connected agents — including **Gemini Web** and **Claude Chat** via Remote MCP — explicit per-project permission (`Disabled` / `Read-Only` / `Full Access`) to list, read, search, edit files, inspect `git diff`, and run commands inside your project folder (protected by hard path jail, sensitive file blocking, and audit logs).
+- **Private-First + On-Demand Tunnel**: Runs locally on `127.0.0.1` or your private network by default. Toggle a temporary Cloudflare Quick Tunnel (`read-only` or `read-write`, with auto-shutdown TTL) only when needed, or export 1-click **Context Packs** (`.md`) offline.
+
+---
+
+## Installation
+
+### Option 1: Local Machine (Windows / macOS / Linux)
+
+**Requirements:** Node.js **22.5+** (uses built-in `node:sqlite`) and Git. *(Optional: [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) if you want to use the On-Demand Public Tunnel).*
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/Iqbal2790/agent-colab.git
+cd agent-colab
+
+# 2. Install dependencies & build all packages + Web Dashboard
+npm install
+npm run build
+
+# 3. Initialize your local Vault (~/.agent-colab/vault)
+node packages/cli/dist/index.js init
+
+# 4. Start the private server, MCP endpoint & Web Dashboard
+node packages/cli/dist/index.js serve
+```
+
+Open **http://127.0.0.1:4242** in your browser.
+
+- **MCP Streamable HTTP**: `http://127.0.0.1:4242/mcp`
+- **MCP Stdio**: `node packages/cli/dist/index.js mcp`
+
+### Option 2: Self-Host with Docker (VPS / Home Server / VM)
+
+```bash
+git clone https://github.com/Iqbal2790/agent-colab.git
+cd agent-colab
+
+docker compose up -d --build
+```
+
+By default, `docker-compose.yml` binds to `127.0.0.1:4242` and persists your Vault in `./vault`. To expose it to other devices inside your private network (LAN / Tailscale / WireGuard), bind the port in `docker-compose.yml` to your private interface IP.
+
+---
+
+## Connecting Your AI Tools
+
+- **Antigravity & Hermes Agent**: Open the **Skills & Sync** tab in the Web Dashboard and click **Connect MCP**, or run:
+  ```bash
+  node packages/cli/dist/index.js connect antigravity --mode http
+  node packages/cli/dist/index.js connect hermes --mode http
+  ```
+- **Gemini Web & Claude Chat**: Open the **Web Bridge** tab → start the **On-Demand Tunnel** → copy the **Remote MCP URL** into Gemini Web (**Customize → Connectors → + Custom**) or Claude Chat (**Settings → Connectors**).
+
+---
+
+## Development & Tests
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+## License
+
+MIT

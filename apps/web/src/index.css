@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif;
+  --color-canvas-outer: #DFDDD9;
+  --color-canvas-shell: #F7F6F3;
+  --color-canvas-card: #EFECE7;
+  --color-canvas-inner: #FFFFFF;
+  --color-canvas-stone: #E8E5DF;
+  --color-brand-primary: #4F46E5;
+  --color-brand-secondary: #6366F1;
+  --color-brand-dark: #1E1B4B;
+  --color-brand-amber: #F59E0B;
+  --color-brand-emerald: #10B981;
+  --color-brand-rose: #F43F5E;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background-color: #F7F6F3;
+    color: #0F172A;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #D6D3CD;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4F46E5;
+}
+
+.shadow-shell {
+  box-shadow: 0 24px 60px -15px rgba(24, 24, 27, 0.12), 0 0 1px 1px rgba(255, 255, 255, 0.7) inset;
+}
+
+.shadow-pill {
+  box-shadow: 0 2px 8px -2px rgba(17, 24, 39, 0.06);
+}
+
+.shadow-indigo-glow {
+  box-shadow: 0 10px 25px -5px rgba(79, 70, 229, 0.38);
+}
+
+.saas-transition {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}

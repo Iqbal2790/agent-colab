@@ -1,0 +1,15 @@
+services:
+  agent-colab:
+    build: .
+    container_name: agent-colab
+    restart: unless-stopped
+    # Bind to localhost by default so it stays strictly inside your private network.
+    # Replace 127.0.0.1 with your LAN/Tailscale IP if accessing from other private devices.
+    ports:
+      - "127.0.0.1:4242:4242"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "4242"
+      AGENT_COLAB_VAULT: "/data/vault"
+    volumes:
+      - ./vault:/data/vault

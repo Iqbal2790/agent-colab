@@ -1,0 +1,26 @@
+{
+  "name": "@agent-colab/server",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/bin.ts"
+  },
+  "dependencies": {
+    "@agent-colab/adapters": "*",
+    "@agent-colab/core": "*",
+    "@agent-colab/tunnel": "*",
+    "@hono/node-server": "^1.14.1",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "hono": "^4.7.7",
+    "zod": "^3.24.2"
+  }
+}
