@@ -2,7 +2,7 @@
 
 **Open-source, private-first centralized hub for AI agent context, collaboration, skill/config sync, and opt-in workspace coding.**
 
-Stop re-explaining your project context every time you switch AI tools (**Antigravity**, **Hermes Agent**, **Claude Chat**, **Gemini Web**, etc.). Agent Colab runs inside your private network (local PC, VM, home server, or VPS) and connects all your agents via **MCP (Model Context Protocol)** with an on-demand public tunnel when web AI tools need temporary access.
+Stop re-explaining your project context every time you switch AI tools (**Antigravity**, **Hermes Agent**, **Claude Code**, **OpenClaw**, **Cursor**, etc.). Agent Colab runs inside your private network (local PC, VM, home server, or VPS) and connects all your agents via **MCP (Model Context Protocol)** with an on-demand public tunnel when web AI tools need temporary access.
 
 ---
 
