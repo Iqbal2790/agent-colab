@@ -376,10 +376,21 @@ export function createApp(options: CreateAppOptions): Hono {
       mode?: 'stdio' | 'http';
       serverUrl?: string;
       dryRun?: boolean;
+      force?: boolean;
     };
     const adapters = createAdapters(adapterOptions);
     const adapter = adapters[body.agent];
     if (!adapter) return c.json({ error: `Unknown agent adapter: ${body.agent}` }, 400);
+
+    const detected = adapter.detect();
+    if (!detected.installed && !body.force && !body.dryRun) {
+      return c.json(
+        {
+          error: `${adapter.displayName} is not installed on this host machine. Use "Remote Setup" to copy the MCP config or CLI command for your local computer.`,
+        },
+        400
+      );
+    }
 
     const result = adapter.connectAgentColab({
       mode: body.mode ?? 'http',

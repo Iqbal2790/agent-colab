@@ -42,6 +42,10 @@ export default function App() {
   const [view, setView] = useState<ViewId>('dashboard');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newProjectModal, setNewProjectModal] = useState(false);
+  const [remoteSetupAgent, setRemoteSetupAgent] = useState<AdapterInfo | null>(null);
+  const [remoteServerUrl, setRemoteServerUrl] = useState(() =>
+    typeof window !== 'undefined' ? `${window.location.origin}/mcp` : 'http://127.0.0.1:4242/mcp'
+  );
 
   const [vaultPath, setVaultPath] = useState('');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -366,6 +370,66 @@ export default function App() {
     tunnel.active && tunnel.publicUrl && tunnel.token
       ? `${tunnel.publicUrl}/mcp?token=${tunnel.token}`
       : '';
+
+  function buildRemoteSetup(agent: AgentAdapterId, serverUrl: string) {
+    const cleanUrl = serverUrl.trim() || 'http://127.0.0.1:4242/mcp';
+    const cliCommand = `npx @agent-colab/cli connect ${agent} --mode http --url ${cleanUrl}`;
+
+    if (agent === 'hermes') {
+      return {
+        targetFile: '~/.hermes/config.yaml',
+        format: 'YAML',
+        cliCommand,
+        snippet: `mcp_servers:\n  agent-colab:\n    url: "${cleanUrl}"`,
+      };
+    }
+    if (agent === 'openclaw') {
+      return {
+        targetFile: '~/.openclaw/openclaw.json',
+        format: 'JSON',
+        cliCommand,
+        snippet: JSON.stringify(
+          { mcp: { servers: { 'agent-colab': { url: cleanUrl } } } },
+          null,
+          2
+        ),
+      };
+    }
+    if (agent === 'claude-code') {
+      return {
+        targetFile: '~/.claude.json',
+        format: 'JSON',
+        cliCommand,
+        snippet: JSON.stringify(
+          { mcpServers: { 'agent-colab': { type: 'http', url: cleanUrl } } },
+          null,
+          2
+        ),
+      };
+    }
+    if (agent === 'cursor') {
+      return {
+        targetFile: '~/.cursor/mcp.json',
+        format: 'JSON',
+        cliCommand,
+        snippet: JSON.stringify(
+          { mcpServers: { 'agent-colab': { url: cleanUrl } } },
+          null,
+          2
+        ),
+      };
+    }
+    return {
+      targetFile: '~/.gemini/config/mcp_config.json',
+      format: 'JSON',
+      cliCommand,
+      snippet: JSON.stringify(
+        { mcpServers: { 'agent-colab': { url: cleanUrl } } },
+        null,
+        2
+      ),
+    };
+  }
 
   function openView(next: ViewId) {
     setView(next);
@@ -1345,36 +1409,61 @@ export default function App() {
                           <p>Config: {a.configPath}</p>
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void handleSync(a.agent, 'import', true)}
-                            className="rounded-full bg-[#EFECE7] hover:bg-slate-200 text-slate-700 px-3.5 py-2 text-xs font-semibold saas-transition"
-                          >
-                            Preview Import
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleSync(a.agent, 'import', false)}
-                            className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 saas-transition"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            Import
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleSync(a.agent, 'export', false)}
-                            className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 saas-transition"
-                          >
-                            <Upload className="w-3.5 h-3.5" />
-                            Export
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleConnect(a.agent)}
-                            className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow saas-transition"
-                          >
-                            Connect MCP
-                          </button>
+                          {a.installed ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleSync(a.agent, 'import', true)}
+                                className="rounded-full bg-[#EFECE7] hover:bg-slate-200 text-slate-700 px-3.5 py-2 text-xs font-semibold saas-transition"
+                              >
+                                Preview Import
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleSync(a.agent, 'import', false)}
+                                className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 saas-transition"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                Import
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleSync(a.agent, 'export', false)}
+                                className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 saas-transition"
+                              >
+                                <Upload className="w-3.5 h-3.5" />
+                                Export
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleConnect(a.agent)}
+                                className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow saas-transition"
+                              >
+                                Connect Local MCP
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRemoteSetupAgent(a)}
+                                className="rounded-full bg-[#F7F6F3] hover:bg-[#EFECE7] text-slate-600 px-3.5 py-2 text-xs font-semibold saas-transition"
+                              >
+                                Remote Snippet
+                              </button>
+                            </>
+                          ) : (
+                            <div className="w-full space-y-2.5">
+                              <p className="text-[11px] text-slate-500">
+                                Not installed on this host machine. Connect from your laptop/PC over
+                                private network (LAN / Tailscale / WireGuard):
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setRemoteSetupAgent(a)}
+                                className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow saas-transition"
+                              >
+                                Remote Setup (Copy Config / CLI)
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1929,6 +2018,116 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* REMOTE SETUP MODAL (For connecting laptop/PC agents to VPS / VM / Home Server) */}
+        {remoteSetupAgent && (() => {
+          const setup = buildRemoteSetup(remoteSetupAgent.agent, remoteServerUrl);
+          return (
+            <div
+              onClick={() => setRemoteSetupAgent(null)}
+              className="fixed inset-0 bg-slate-950/40 backdrop-blur-[2px] z-50 flex items-center justify-center p-4"
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-lg max-h-[calc(100dvh-2rem)] bg-[#F7F6F3] rounded-[28px] shadow-2xl border border-white flex flex-col overflow-hidden"
+              >
+                <div className="px-6 py-4 border-b border-slate-200/70 flex items-center justify-between shrink-0">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Remote Setup — {remoteSetupAgent.displayName}
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Connect {remoteSetupAgent.displayName} on your local machine to this Agent
+                      Colab server.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRemoteSetupAgent(null)}
+                    className="w-8 h-8 rounded-full bg-[#EFECE7] hover:bg-white flex items-center justify-center text-slate-600"
+                    aria-label="Close remote setup modal"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-6 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      Agent Colab MCP URL (use your VPS / Tailscale / LAN IP if remote)
+                    </label>
+                    <input
+                      type="text"
+                      value={remoteServerUrl}
+                      onChange={(e) => setRemoteServerUrl(e.target.value)}
+                      className="w-full rounded-xl bg-white px-3.5 py-2.5 font-mono text-xs text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
+                    />
+                  </div>
+
+                  {/* Option 1: 1-line CLI */}
+                  <div className="bg-[#EFECE7] rounded-[20px] p-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800">
+                        Option 1: Run 1-Line CLI on Your Local Machine
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyText('remote-cli', setup.cliCommand)}
+                        className="rounded-full bg-white hover:bg-[#4F46E5] hover:text-white text-slate-700 px-3 py-1 text-[11px] font-semibold flex items-center gap-1 shadow-sm saas-transition"
+                      >
+                        {copiedKey === 'remote-cli' ? (
+                          <Check className="w-3 h-3" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                        {copiedKey === 'remote-cli' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="rounded-xl bg-slate-900 text-emerald-300 p-3 font-mono text-[11px] overflow-x-auto">
+                      {setup.cliCommand}
+                    </pre>
+                  </div>
+
+                  {/* Option 2: Paste Config Snippet */}
+                  <div className="bg-[#EFECE7] rounded-[20px] p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-slate-800 block">
+                          Option 2: Paste {setup.format} into {setup.targetFile}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copyText('remote-snippet', setup.snippet)}
+                        className="rounded-full bg-white hover:bg-[#4F46E5] hover:text-white text-slate-700 px-3 py-1 text-[11px] font-semibold flex items-center gap-1 shadow-sm saas-transition shrink-0"
+                      >
+                        {copiedKey === 'remote-snippet' ? (
+                          <Check className="w-3 h-3" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                        {copiedKey === 'remote-snippet' ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="rounded-xl bg-white text-slate-800 p-3 font-mono text-[11px] overflow-x-auto shadow-sm">
+                      {setup.snippet}
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="px-6 py-3.5 border-t border-slate-200/70 flex justify-end shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setRemoteSetupAgent(null)}
+                    className="rounded-full bg-slate-900 text-white px-5 py-2 text-xs font-semibold"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
     </div>
   );
 }
