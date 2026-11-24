@@ -34,7 +34,7 @@ export class AntigravityAdapter implements AgentAdapter {
     const home = os.homedir();
     this.skillsDir = options?.skillsDir ?? path.join(home, '.gemini', 'config', 'skills');
     this.configPath =
-      options?.configPath ?? path.join(home, '.gemini', 'antigravity', 'mcp_config.json');
+      options?.configPath ?? path.join(home, '.gemini', 'config', 'mcp_config.json');
   }
 
   detect(): AdapterDetectInfo {
@@ -211,7 +211,7 @@ export class AntigravityAdapter implements AgentAdapter {
     const entry: Record<string, unknown> =
       options.mode === 'http'
         ? {
-            serverUrl: options.serverUrl ?? 'http://127.0.0.1:4242/mcp',
+            url: options.serverUrl ?? 'http://127.0.0.1:4242/mcp',
           }
         : {
             command: options.cliCommand ?? 'npx',
