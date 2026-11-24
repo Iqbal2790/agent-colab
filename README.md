@@ -70,6 +70,45 @@ By default, `docker-compose.yml` binds to `127.0.0.1:4242` and persists your Vau
 
 ---
 
+## Installing the Agent Colab Skill (Auto-Sync Memory)
+
+This repository includes an official skill at [`skills/agent-colab/SKILL.md`](./skills/agent-colab/SKILL.md) that teaches your AI agents how to use Agent Colab and **proactively load context & sync work memory/handoff notes without being asked**.
+
+### Option 1: Copy into Your Agent's Global Skills Directory
+
+**macOS / Linux:**
+```bash
+# Antigravity (Desktop App, IDE & CLI)
+mkdir -p ~/.gemini/config/skills/agent-colab && cp skills/agent-colab/SKILL.md ~/.gemini/config/skills/agent-colab/
+
+# Hermes Agent
+mkdir -p ~/.hermes/skills/agent-colab && cp skills/agent-colab/SKILL.md ~/.hermes/skills/agent-colab/
+
+# Claude Code
+mkdir -p ~/.claude/skills/agent-colab && cp skills/agent-colab/SKILL.md ~/.claude/skills/agent-colab/
+
+# OpenClaw
+mkdir -p ~/.openclaw/skills/agent-colab && cp skills/agent-colab/SKILL.md ~/.openclaw/skills/agent-colab/
+
+# Cursor
+mkdir -p ~/.cursor/skills/agent-colab && cp skills/agent-colab/SKILL.md ~/.cursor/skills/agent-colab/
+```
+
+**Windows (PowerShell):**
+```powershell
+# Antigravity (Desktop App, IDE & CLI)
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.gemini\config\skills\agent-colab" | Out-Null
+Copy-Item "skills\agent-colab\SKILL.md" "$env:USERPROFILE\.gemini\config\skills\agent-colab\"
+
+# Replace ".gemini\config\skills" with ".hermes\skills", ".claude\skills", ".openclaw\skills", or ".cursor\skills" for other agents
+```
+
+### Option 2: Sync Once via Agent Colab Vault
+
+Once installed in one agent (or placed in `~/.agent-colab/vault/skills/agent-colab/SKILL.md`), open the **Skills & Sync** tab in the Web Dashboard to export the skill to all your other agents in one click.
+
+---
+
 ## Development & Tests
 
 ```bash
