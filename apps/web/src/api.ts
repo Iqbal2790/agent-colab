@@ -58,8 +58,10 @@ export interface SkillItem {
   updatedAt: string;
 }
 
+export type AgentAdapterId = 'antigravity' | 'hermes' | 'claude-code' | 'openclaw' | 'cursor';
+
 export interface AdapterInfo {
-  agent: 'antigravity' | 'hermes';
+  agent: AgentAdapterId;
   displayName: string;
   installed: boolean;
   skillsDir: string;
@@ -75,7 +77,7 @@ export interface SyncAction {
 }
 
 export interface SyncResult {
-  agent: 'antigravity' | 'hermes';
+  agent: AgentAdapterId;
   direction: 'import' | 'export';
   dryRun: boolean;
   actions: SyncAction[];
@@ -152,9 +154,9 @@ export const api = {
   }) => req<{ note: HandoffNote }>('/api/notes', { method: 'POST', body: JSON.stringify(payload) }),
   listSkills: () => req<{ skills: SkillItem[] }>('/api/skills'),
   listAdapters: () => req<{ adapters: AdapterInfo[] }>('/api/adapters'),
-  syncAdapter: (payload: { agent: 'antigravity' | 'hermes'; direction: 'import' | 'export'; dryRun?: boolean }) =>
+  syncAdapter: (payload: { agent: AgentAdapterId; direction: 'import' | 'export'; dryRun?: boolean }) =>
     req<SyncResult>('/api/sync', { method: 'POST', body: JSON.stringify(payload) }),
-  connectAdapter: (payload: { agent: 'antigravity' | 'hermes'; mode: 'http' | 'stdio'; dryRun?: boolean }) =>
+  connectAdapter: (payload: { agent: AgentAdapterId; mode: 'http' | 'stdio'; dryRun?: boolean }) =>
     req<{ agent: string; configPath: string; backupPath?: string; dryRun: boolean; entry: unknown }>('/api/connect', {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -4,7 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { VaultManager } from '@agent-colab/core';
-import { AntigravityAdapter, HermesAdapter } from '../src/index.js';
+import {
+  AntigravityAdapter,
+  ClaudeCodeAdapter,
+  CursorAdapter,
+  HermesAdapter,
+  OpenClawAdapter,
+} from '../src/index.js';
 
 describe('@agent-colab/adapters (sandboxed)', () => {
   let tmpRoot: string;
@@ -107,5 +113,65 @@ describe('@agent-colab/adapters (sandboxed)', () => {
       vaultPath: vault.vaultPath,
     });
     expect(agyConn.entry.command).toBe('npx');
+  });
+
+  it('syncs and connects Claude Code, OpenClaw (nested mcp.servers), and Cursor', () => {
+    vault.upsertSkill(
+      'clean-code',
+      '---\nname: clean-code\ndescription: Keep modules small\n---\n# Clean Code\n'
+    );
+    vault.upsertMcpServer({
+      name: 'filesystem',
+      transport: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
+    });
+
+    const claude = new ClaudeCodeAdapter({
+      skillsDir: path.join(tmpRoot, 'claude', 'skills'),
+      configPath: path.join(tmpRoot, 'claude', 'claude.json'),
+    });
+    const openclaw = new OpenClawAdapter({
+      skillsDir: path.join(tmpRoot, 'openclaw', 'skills'),
+      configPath: path.join(tmpRoot, 'openclaw', 'openclaw.json'),
+    });
+    const cursor = new CursorAdapter({
+      skillsDir: path.join(tmpRoot, 'cursor', 'skills'),
+      configPath: path.join(tmpRoot, 'cursor', 'mcp.json'),
+    });
+
+    // Export Vault -> Claude Code, OpenClaw, Cursor
+    expect(claude.exportFromVault(vault).actions).toHaveLength(2);
+    expect(openclaw.exportFromVault(vault).actions).toHaveLength(2);
+    expect(cursor.exportFromVault(vault).actions).toHaveLength(2);
+
+    // Connect Agent Colab MCP to each
+    claude.connectAgentColab({ mode: 'http', serverUrl: 'http://127.0.0.1:4242/mcp' });
+    openclaw.connectAgentColab({ mode: 'http', serverUrl: 'http://127.0.0.1:4242/mcp' });
+    cursor.connectAgentColab({ mode: 'http', serverUrl: 'http://127.0.0.1:4242/mcp' });
+
+    const claudeCfg = JSON.parse(
+      fs.readFileSync(path.join(tmpRoot, 'claude', 'claude.json'), 'utf8')
+    );
+    expect(claudeCfg.mcpServers['agent-colab']).toEqual({
+      type: 'http',
+      url: 'http://127.0.0.1:4242/mcp',
+    });
+
+    const openclawCfg = JSON.parse(
+      fs.readFileSync(path.join(tmpRoot, 'openclaw', 'openclaw.json'), 'utf8')
+    );
+    expect(openclawCfg.mcp.servers['agent-colab']).toEqual({
+      url: 'http://127.0.0.1:4242/mcp',
+    });
+    expect(openclawCfg.mcp.servers.filesystem.command).toBe('npx');
+
+    const cursorCfg = JSON.parse(
+      fs.readFileSync(path.join(tmpRoot, 'cursor', 'mcp.json'), 'utf8')
+    );
+    expect(cursorCfg.mcpServers['agent-colab'].url).toBe('http://127.0.0.1:4242/mcp');
+    expect(fs.existsSync(path.join(tmpRoot, 'cursor', 'skills', 'clean-code', 'SKILL.md'))).toBe(
+      true
+    );
   });
 });

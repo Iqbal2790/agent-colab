@@ -65,8 +65,8 @@ program
 
 program
   .command('sync')
-  .description('Import or export skills & MCP configs between Antigravity/Hermes and Vault')
-  .requiredOption('-a, --agent <agent>', 'Target agent: antigravity | hermes')
+  .description('Import or export skills & MCP configs between supported agents and Vault')
+  .requiredOption('-a, --agent <agent>', 'Target agent: antigravity | hermes | claude-code | openclaw | cursor')
   .requiredOption('-d, --direction <direction>', 'Direction: import | export')
   .option('--dry-run', 'Preview changes without modifying any files', false)
   .option('-v, --vault <path>', 'Path to Vault directory')
@@ -75,7 +75,7 @@ program
     vault.init();
     const adapter = createAdapters()[opts.agent];
     if (!adapter) {
-      console.error(`Unknown agent "${opts.agent}". Supported: antigravity, hermes`);
+      console.error(`Unknown agent "${opts.agent}". Supported: antigravity, hermes, claude-code, openclaw, cursor`);
       process.exit(1);
     }
 
@@ -102,8 +102,8 @@ program
 
 program
   .command('connect')
-  .description('Register Agent Colab as an MCP server inside Antigravity or Hermes')
-  .argument('<agent>', 'Target agent: antigravity | hermes')
+  .description('Register Agent Colab as an MCP server inside a supported agent')
+  .argument('<agent>', 'Target agent: antigravity | hermes | claude-code | openclaw | cursor')
   .option('-m, --mode <mode>', 'Transport mode: http | stdio', 'http')
   .option('-u, --url <url>', 'MCP HTTP URL', 'http://127.0.0.1:4242/mcp')
   .option('--dry-run', 'Preview config change without writing', false)
@@ -111,7 +111,7 @@ program
   .action((agent: AgentAdapterId, opts: { mode: 'http' | 'stdio'; url: string; dryRun: boolean; vault?: string }) => {
     const adapter = createAdapters()[agent];
     if (!adapter) {
-      console.error(`Unknown agent "${agent}". Supported: antigravity, hermes`);
+      console.error(`Unknown agent "${agent}". Supported: antigravity, hermes, claude-code, openclaw, cursor`);
       process.exit(1);
     }
     const res = adapter.connectAgentColab({

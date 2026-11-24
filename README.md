@@ -10,7 +10,7 @@ Stop re-explaining your project context every time you switch AI tools (**Antigr
 
 - **Centralized Context & Memory**: Stores user profile, global rules, project contexts, and technical decisions in Git-friendly Markdown + YAML, indexed automatically with **SQLite FTS5** (`node:sqlite`, zero native compilation).
 - **Agent-to-Agent Collaboration**: Shared task board with agent locking (`claim_task`) and structured handoff notes (`leave_handoff_note`) so agents can continue each other's work seamlessly.
-- **Skill & MCP Config Sync**: Import/export `SKILL.md` bundles and MCP configs between **Antigravity** and **Hermes Agent** with dry-run previews, automatic secret redaction (`${ENV_VAR}`), and `.bak` config backups.
+- **Skill & MCP Config Sync**: Import/export `SKILL.md` bundles and MCP configs across **Antigravity**, **Hermes Agent**, **Claude Code**, **OpenClaw**, and **Cursor** with dry-run previews, automatic secret redaction (`${ENV_VAR}`), and `.bak` config backups.
 - **Opt-In Workspace Coding (23 MCP Tools)**: Give connected agents — including **Gemini Web** and **Claude Chat** via Remote MCP — explicit per-project permission (`Disabled` / `Read-Only` / `Full Access`) to list, read, search, edit files, inspect `git diff`, and run commands inside your project folder (protected by hard path jail, sensitive file blocking, and audit logs).
 - **Private-First + On-Demand Tunnel**: Runs locally on `127.0.0.1` or your private network by default. Toggle a temporary Cloudflare Quick Tunnel (`read-only` or `read-write`, with auto-shutdown TTL) only when needed, or export 1-click **Context Packs** (`.md`) offline.
 
@@ -58,10 +58,13 @@ By default, `docker-compose.yml` binds to `127.0.0.1:4242` and persists your Vau
 
 ## Connecting Your AI Tools
 
-- **Antigravity & Hermes Agent**: Open the **Skills & Sync** tab in the Web Dashboard and click **Connect MCP**, or run:
+- **Agentic Tools (Antigravity, Hermes, Claude Code, OpenClaw, Cursor)**: Open the **Skills & Sync** tab in the Web Dashboard and click **Connect MCP**, or run:
   ```bash
   node packages/cli/dist/index.js connect antigravity --mode http
   node packages/cli/dist/index.js connect hermes --mode http
+  node packages/cli/dist/index.js connect claude-code --mode http
+  node packages/cli/dist/index.js connect openclaw --mode http
+  node packages/cli/dist/index.js connect cursor --mode http
   ```
 - **Gemini Web & Claude Chat**: Open the **Web Bridge** tab → start the **On-Demand Tunnel** → copy the **Remote MCP URL** into Gemini Web (**Customize → Connectors → + Custom**) or Claude Chat (**Settings → Connectors**).
 

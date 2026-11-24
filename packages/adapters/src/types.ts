@@ -1,6 +1,11 @@
 import type { VaultManager } from '@agent-colab/core';
 
-export type AgentAdapterId = 'antigravity' | 'hermes';
+export type AgentAdapterId =
+  | 'antigravity'
+  | 'hermes'
+  | 'claude-code'
+  | 'openclaw'
+  | 'cursor';
 
 export interface SyncActionItem {
   kind: 'skill' | 'mcp';

@@ -24,6 +24,7 @@ import {
 import {
   api,
   type AdapterInfo,
+  type AgentAdapterId,
   type CodingAccessMode,
   type HandoffNote,
   type ProjectContext,
@@ -279,7 +280,7 @@ export default function App() {
   }
 
   async function handleSync(
-    agent: 'antigravity' | 'hermes',
+    agent: AgentAdapterId,
     direction: 'import' | 'export',
     dryRun: boolean
   ) {
@@ -297,7 +298,7 @@ export default function App() {
     }
   }
 
-  async function handleConnect(agent: 'antigravity' | 'hermes') {
+  async function handleConnect(agent: AgentAdapterId) {
     try {
       const res = await api.connectAdapter({ agent, mode: 'http', dryRun: false });
       flash(`Connected Agent Colab MCP in ${res.configPath}`);
@@ -724,7 +725,7 @@ export default function App() {
                     </h1>
                     <p className="text-xs sm:text-[13px] text-slate-500 mt-0.5">
                       Centralized context, handoffs, and skill sync across Antigravity, Hermes,
-                      Claude Chat & Gemini Web.
+                      Claude Code, OpenClaw, Cursor & Web AI.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2.5">
@@ -1318,8 +1319,8 @@ export default function App() {
                     Skills & Config Sync
                   </h1>
                   <p className="text-xs text-slate-500">
-                    Copy skills and MCP configs between Antigravity, Hermes, and your central Vault
-                    with automatic secret redaction and backups.
+                    Copy skills and MCP configs between Antigravity, Hermes, Claude Code, OpenClaw,
+                    Cursor, and your central Vault with automatic secret redaction and backups.
                   </p>
                 </div>
 
