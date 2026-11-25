@@ -100,6 +100,16 @@ export interface PersonaProfile {
   updatedAt: string;
 }
 
+export interface AuditEntry {
+  id: number;
+  timestamp: string;
+  actor: string;
+  action: string;
+  resource: string;
+  via: 'local' | 'mcp' | 'web' | 'tunnel' | 'cli';
+  details?: string;
+}
+
 export interface SearchResult {
   id: string;
   type: 'profile' | 'project' | 'task' | 'note' | 'skill';
@@ -172,6 +182,7 @@ export const api = {
   listConnectedAgents: () => req<{ agents: ConnectedAgent[] }>('/api/agents'),
   removeConnectedAgent: (id: string) =>
     req<{ deleted: boolean }>(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  getAuditLogs: (limit = 50) => req<{ logs: AuditEntry[] }>(`/api/audit?limit=${limit}`),
   syncSkillsDir: (payload: { dir: string; direction: 'import' | 'export'; dryRun?: boolean }) =>
     req<SkillSyncResult>('/api/skills/sync-dir', { method: 'POST', body: JSON.stringify(payload) }),
   getTunnel: () => req<TunnelStatus>('/api/tunnel'),

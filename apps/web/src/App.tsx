@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
+  Activity,
   ArrowUpRight,
   Check,
   Copy,
+  Cpu,
   Download,
   FolderGit2,
   Globe,
@@ -23,6 +25,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  type AuditEntry,
   type CodingAccessMode,
   type ConnectedAgent,
   type HandoffNote,
@@ -36,7 +39,7 @@ import {
   type TunnelStatus,
 } from './api';
 
-type ViewId = 'dashboard' | 'collab' | 'sync' | 'bridge' | 'search' | 'profile';
+type ViewId = 'dashboard' | 'agents' | 'collab' | 'sync' | 'bridge' | 'search' | 'profile';
 
 export default function App() {
   const [view, setView] = useState<ViewId>('dashboard');
@@ -66,6 +69,7 @@ export default function App() {
   const [newPersonaContent, setNewPersonaContent] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [connectedAgents, setConnectedAgents] = useState<ConnectedAgent[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
   const [tunnel, setTunnel] = useState<TunnelStatus>({ active: false, provider: 'cloudflared' });
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -113,7 +117,7 @@ export default function App() {
 
   async function loadAll() {
     try {
-      const [h, prof, projList, tasksRes, notesRes, sk, agentsRes, tun] = await Promise.all([
+      const [h, prof, projList, tasksRes, notesRes, sk, agentsRes, auditRes, tun] = await Promise.all([
         api.health(),
         api.getProfile(),
         api.listProjects(),
@@ -121,6 +125,7 @@ export default function App() {
         api.listNotes(),
         api.listSkills(),
         api.listConnectedAgents(),
+        api.getAuditLogs(60),
         api.getTunnel(),
       ]);
       setVaultPath(h.vaultPath);
@@ -132,6 +137,7 @@ export default function App() {
       setAllNotes(notesRes.notes);
       setSkills(sk.skills);
       setConnectedAgents(agentsRes.agents);
+      setAuditLogs(auditRes.logs);
       setTunnel(tun);
 
       if (projList.projects.length > 0 && !selectedSlug) {
@@ -519,8 +525,9 @@ export default function App() {
               {(
                 [
                   ['dashboard', 'Overview & Context', Home, `${projects.length}`],
+                  ['agents', 'Connected Agents', Cpu, `${connectedAgents.length}`],
                   ['collab', 'Collaboration & Handoffs', MessageSquare, `${allNotes.length}`],
-                  ['sync', 'Universal Connector', Layers, `${connectedAgents.length}`],
+                  ['sync', 'Universal Connector', Layers, `${skills.length}`],
                   ['bridge', 'Web Bridge & Tunnel', Globe, tunnel.active ? 'ON' : 'OFF'],
                   ['search', 'Vault Search (FTS5)', Search, '/'],
                   ['profile', 'User Profile & Rules', Settings, 'Vault'],
@@ -609,6 +616,7 @@ export default function App() {
             {(
               [
                 ['dashboard', 'Dashboard', Home],
+                ['agents', 'Agents', Cpu],
                 ['collab', 'Collaboration', MessageSquare],
                 ['sync', 'Connector & Skills', Layers],
                 ['bridge', 'Web Bridge', Globe],
@@ -708,9 +716,10 @@ export default function App() {
                 {(
                   [
                     ['search', 'Vault Search (FTS5)', Search],
+                    ['agents', 'Connected Agents', Cpu],
                     ['collab', 'Agent Handoffs', MessageSquare],
                     ['dashboard', 'Project Contexts', FolderGit2],
-                    ['sync', 'Skills & Config Sync', Layers],
+                    ['sync', 'Universal Connector', Layers],
                     ['bridge', 'Tunnel & Security', Shield],
                   ] as const
                 ).map(([id, title, Icon]) => {
@@ -977,7 +986,7 @@ export default function App() {
 
                       <button
                         type="button"
-                        onClick={() => openView('sync')}
+                        onClick={() => openView('agents')}
                         className="bg-[#EFECE7] hover:bg-[#E8E5DF] rounded-[24px] p-4 text-left saas-transition"
                       >
                         <div className="flex items-center justify-between">
@@ -1191,6 +1200,265 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* ============================================================= */}
+            {/* VIEW 1.5: DEDICATED CONNECTED AGENTS PAGE                     */}
+            {/* ============================================================= */}
+            {view === 'agents' && (() => {
+              const nowMs = Date.now();
+              const isRecent = (iso: string) => nowMs - new Date(iso).getTime() < 15 * 60_000;
+              const activeNowCount = connectedAgents.filter((a) => isRecent(a.lastSeen)).length;
+              const totalReqs = connectedAgents.reduce((acc, a) => acc + a.requestCount, 0);
+              const viaTunnelCount = connectedAgents.filter((a) => a.via === 'tunnel').length;
+
+              return (
+                <div className="space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                        Connected Agents
+                      </h1>
+                      <p className="text-xs text-slate-500">
+                        Every AI agent & device automatically detected through the Universal MCP
+                        endpoint.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void loadAll()}
+                        className="rounded-full bg-white hover:bg-[#EFECE7] text-slate-700 px-4 py-2 text-xs font-semibold shadow-pill flex items-center gap-1.5 saas-transition"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Refresh
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openView('sync')}
+                        className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow saas-transition"
+                      >
+                        + Connect New Agent
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Summary Strip */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-[#EFECE7] rounded-[24px] p-4">
+                      <div className="bg-white rounded-[18px] p-4 shadow-sm">
+                        <span className="text-xs font-semibold text-slate-500">
+                          Auto-Detected Agents
+                        </span>
+                        <p className="mt-2 text-2xl font-bold text-slate-900">
+                          {connectedAgents.length}
+                        </p>
+                        <p className="text-[11px] text-emerald-700 mt-0.5">
+                          {activeNowCount} active in last 15 min
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#EFECE7] rounded-[24px] p-4">
+                      <div className="bg-white rounded-[18px] p-4 shadow-sm">
+                        <span className="text-xs font-semibold text-slate-500">
+                          Total MCP Requests
+                        </span>
+                        <p className="mt-2 text-2xl font-bold text-slate-900">{totalReqs}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Recorded across all devices
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#EFECE7] rounded-[24px] p-4">
+                      <div className="bg-[#1E1B4B] text-white rounded-[18px] p-4 shadow-sm">
+                        <span className="text-xs font-semibold text-indigo-200">
+                          Transport Breakdown
+                        </span>
+                        <p className="mt-2 text-2xl font-bold">
+                          {connectedAgents.length - viaTunnelCount} Private · {viaTunnelCount}{' '}
+                          Tunnel
+                        </p>
+                        <p className="text-[11px] text-indigo-200 mt-0.5">
+                          Tailnet / LAN vs On-Demand Tunnel
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Connected Agents Grid */}
+                  <div className="bg-[#EFECE7] rounded-[26px] p-5 space-y-4">
+                    <h2 className="text-[15px] font-bold text-slate-900">
+                      Registered Agents & Devices ({connectedAgents.length})
+                    </h2>
+
+                    {connectedAgents.length === 0 ? (
+                      <div className="bg-white rounded-[20px] p-8 text-center shadow-sm">
+                        <p className="text-sm font-bold text-slate-800">
+                          No agents connected yet
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                          Point Antigravity, Hermes, Claude Code, OpenClaw, Cursor, or any MCP
+                          client to your Universal MCP URL. As soon as it connects, it appears here
+                          automatically.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => openView('sync')}
+                          className="mt-4 rounded-full bg-[#4F46E5] text-white px-5 py-2 text-xs font-semibold shadow-indigo-glow"
+                        >
+                          Open Universal Connector
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {connectedAgents.map((ag) => {
+                          const recent = isRecent(ag.lastSeen);
+                          const agentLogs = auditLogs
+                            .filter((l) => l.actor === ag.id || l.actor === ag.clientName)
+                            .slice(0, 3);
+                          return (
+                            <div
+                              key={ag.id}
+                              className="bg-white rounded-[20px] p-5 shadow-sm flex flex-col justify-between gap-3"
+                            >
+                              <div>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span
+                                        className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                          recent ? 'bg-[#10B981]' : 'bg-slate-300'
+                                        }`}
+                                      />
+                                      <h3 className="text-sm font-bold text-slate-900 break-all">
+                                        {ag.id}
+                                      </h3>
+                                      {ag.clientVersion && (
+                                        <span className="text-[11px] font-mono text-slate-400">
+                                          v{ag.clientVersion}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">
+                                      Client: <span className="font-mono">{ag.clientName}</span> ·{' '}
+                                      {recent ? 'Active recently' : 'Idle'}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleRemoveAgent(ag.id)}
+                                    className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+                                    title="Remove agent"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                </div>
+
+                                <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
+                                  <span className="rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-0.5 font-semibold">
+                                    via: {ag.via}
+                                  </span>
+                                  <span className="rounded-full bg-[#F7F6F3] text-slate-700 px-2.5 py-0.5 font-semibold">
+                                    {ag.requestCount} requests
+                                  </span>
+                                  {ag.persona && (
+                                    <span className="rounded-full bg-indigo-50 text-[#4F46E5] px-2.5 py-0.5 font-semibold">
+                                      persona: {ag.persona}
+                                    </span>
+                                  )}
+                                  {ag.tagScope && (
+                                    <span className="rounded-full bg-amber-50 text-amber-700 px-2.5 py-0.5 font-semibold">
+                                      tags: {ag.tagScope}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {agentLogs.length > 0 && (
+                                  <div className="mt-3 pt-3 border-t border-slate-100 space-y-1">
+                                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                      Recent Activity
+                                    </p>
+                                    {agentLogs.map((log) => (
+                                      <p
+                                        key={log.id}
+                                        className="text-[11px] text-slate-600 truncate"
+                                      >
+                                        <span className="font-mono text-[#4F46E5]">
+                                          {log.action}
+                                        </span>{' '}
+                                        · {log.resource}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                                <span>First: {new Date(ag.firstSeen).toLocaleDateString()}</span>
+                                <span>Last: {new Date(ag.lastSeen).toLocaleString()}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Live Global Activity Feed */}
+                  <div className="bg-[#EFECE7] rounded-[26px] p-5 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-[#4F46E5]" />
+                      <h2 className="text-[15px] font-bold text-slate-900">
+                        Live Agent Activity Log ({auditLogs.length})
+                      </h2>
+                    </div>
+                    <div className="bg-white rounded-[20px] overflow-hidden shadow-sm">
+                      {auditLogs.length === 0 ? (
+                        <p className="p-6 text-xs text-slate-500 text-center">
+                          No agent activity recorded yet.
+                        </p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead className="border-b border-slate-100 text-[11px] text-slate-400 font-semibold">
+                              <tr>
+                                <th className="py-2.5 px-4">Actor</th>
+                                <th className="py-2.5 px-4">Action</th>
+                                <th className="py-2.5 px-4">Resource</th>
+                                <th className="py-2.5 px-4">Via</th>
+                                <th className="py-2.5 px-4 text-right">Time</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {auditLogs.slice(0, 15).map((log) => (
+                                <tr key={log.id} className="hover:bg-[#F7F6F3]/60">
+                                  <td className="py-2.5 px-4 font-semibold text-slate-900">
+                                    {log.actor}
+                                  </td>
+                                  <td className="py-2.5 px-4 font-mono text-[11px] text-[#4F46E5]">
+                                    {log.action}
+                                  </td>
+                                  <td className="py-2.5 px-4 text-slate-600">{log.resource}</td>
+                                  <td className="py-2.5 px-4">
+                                    <span className="rounded-full bg-[#F7F6F3] px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                      {log.via}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-4 text-right text-slate-400 whitespace-nowrap">
+                                    {new Date(log.timestamp).toLocaleTimeString()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ============================================================= */}
             {/* VIEW 2: COLLABORATION (TASKS & HANDOFF NOTES)                 */}
