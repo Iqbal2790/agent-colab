@@ -6,6 +6,7 @@ import yaml from 'js-yaml';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { VaultIndexDb } from './index-db.js';
 import { redactEnvRecord } from './redact.js';
+import { CredentialStore, type CredentialMeta, type CredentialWithSecret } from './credentials.js';
 import type {
   AuditEntry,
   CodingAccessMode,
@@ -73,11 +74,13 @@ updatedAt: ${new Date().toISOString()}
 export class VaultManager {
   public readonly vaultPath: string;
   private indexDb: VaultIndexDb;
+  private credentials: CredentialStore;
   private watcher?: FSWatcher;
 
   constructor(vaultPath?: string) {
     this.vaultPath = path.resolve(vaultPath ?? getDefaultVaultPath());
     this.indexDb = new VaultIndexDb(path.join(this.vaultPath, '.index', 'colab.sqlite'));
+    this.credentials = new CredentialStore(this.vaultPath);
   }
 
   init(): void {
@@ -111,7 +114,12 @@ export class VaultManager {
 
     const gitignoreFile = path.join(this.vaultPath, '.gitignore');
     if (!fs.existsSync(gitignoreFile)) {
-      fs.writeFileSync(gitignoreFile, '.index/\n*.sqlite*\n', 'utf8');
+      fs.writeFileSync(gitignoreFile, '.index/\n.secrets/\n*.sqlite*\n', 'utf8');
+    } else {
+      const gi = fs.readFileSync(gitignoreFile, 'utf8');
+      if (!gi.includes('.secrets/')) {
+        fs.appendFileSync(gitignoreFile, '\n.secrets/\n', 'utf8');
+      }
     }
 
     this.rebuildIndex();
@@ -928,5 +936,32 @@ export class VaultManager {
 
   removeConnectedAgent(id: string): boolean {
     return this.indexDb.removeConnectedAgent(id);
+  }
+
+  // --- Encrypted Credentials Vault (never synced to Git) ---
+
+  listCredentials(): CredentialMeta[] {
+    return this.credentials.list();
+  }
+
+  getCredential(name: string): CredentialWithSecret | null {
+    return this.credentials.get(name);
+  }
+
+  upsertCredential(input: {
+    name: string;
+    value?: string;
+    service?: string;
+    envVar?: string;
+    tags?: string[];
+    allowAgentRead?: boolean;
+    notes?: string;
+    addedBy?: string;
+  }): CredentialMeta {
+    return this.credentials.upsert(input);
+  }
+
+  deleteCredential(name: string): boolean {
+    return this.credentials.delete(name);
   }
 }

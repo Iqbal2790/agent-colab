@@ -110,6 +110,19 @@ export interface AuditEntry {
   details?: string;
 }
 
+export interface CredentialMeta {
+  name: string;
+  service: string;
+  envVar?: string;
+  maskedValue: string;
+  tags: string[];
+  allowAgentRead: boolean;
+  notes?: string;
+  addedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SearchResult {
   id: string;
   type: 'profile' | 'project' | 'task' | 'note' | 'skill';
@@ -183,6 +196,30 @@ export const api = {
   removeConnectedAgent: (id: string) =>
     req<{ deleted: boolean }>(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   getAuditLogs: (limit = 50) => req<{ logs: AuditEntry[] }>(`/api/audit?limit=${limit}`),
+  listCredentials: () => req<{ credentials: CredentialMeta[] }>('/api/credentials'),
+  revealCredential: (name: string) =>
+    req<{ credential: CredentialMeta & { value: string } }>(
+      `/api/credentials/${encodeURIComponent(name)}/reveal`
+    ),
+  upsertCredential: (
+    name: string,
+    payload: {
+      value?: string;
+      service?: string;
+      envVar?: string;
+      tags?: string[];
+      allowAgentRead?: boolean;
+      notes?: string;
+    }
+  ) =>
+    req<{ credential: CredentialMeta }>(`/api/credentials/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteCredential: (name: string) =>
+    req<{ deleted: boolean }>(`/api/credentials/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
   syncSkillsDir: (payload: { dir: string; direction: 'import' | 'export'; dryRun?: boolean }) =>
     req<SkillSyncResult>('/api/skills/sync-dir', { method: 'POST', body: JSON.stringify(payload) }),
   getTunnel: () => req<TunnelStatus>('/api/tunnel'),

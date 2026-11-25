@@ -379,6 +379,66 @@ export function createApp(options: CreateAppOptions): Hono {
     return c.json({ logs: vault.getAuditLogs(limit) });
   });
 
+  // Encrypted Credentials Vault (Private Network Only)
+  app.get('/api/credentials', (c) => {
+    return c.json({ credentials: vault.listCredentials() });
+  });
+
+  app.get('/api/credentials/:name/reveal', (c) => {
+    const name = c.req.param('name');
+    const cred = vault.getCredential(name);
+    if (!cred) return c.json({ error: 'Credential not found' }, 404);
+    vault.logAudit({
+      actor: 'user',
+      action: 'reveal_credential',
+      resource: `credential:${cred.name}`,
+      via: 'web',
+    });
+    return c.json({ credential: cred });
+  });
+
+  app.put('/api/credentials/:name', async (c) => {
+    const name = c.req.param('name');
+    const body = (await c.req.json()) as {
+      value?: string;
+      service?: string;
+      envVar?: string;
+      tags?: string[];
+      allowAgentRead?: boolean;
+      notes?: string;
+    };
+    try {
+      const credential = vault.upsertCredential({
+        name,
+        ...body,
+        addedBy: 'user',
+      });
+      vault.logAudit({
+        actor: 'user',
+        action: 'upsert_credential',
+        resource: `credential:${credential.name}`,
+        via: 'web',
+      });
+      return c.json({ credential });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  app.delete('/api/credentials/:name', (c) => {
+    const name = c.req.param('name');
+    const deleted = vault.deleteCredential(name);
+    if (deleted) {
+      vault.logAudit({
+        actor: 'user',
+        action: 'delete_credential',
+        resource: `credential:${name}`,
+        via: 'web',
+      });
+    }
+    return c.json({ deleted });
+  });
+
   // Auto-Detected Connected Agents Registry & Generic Local Skills Sync
   app.get('/api/agents', (c) => {
     return c.json({ agents: vault.listConnectedAgents() });

@@ -13,6 +13,7 @@ Stop re-explaining your project context every time you switch AI tools (**Antigr
 - **1 Universal MCP Connector (Auto-Detect)**: No per-agent adapters to maintain. Point **any** MCP-compatible agent (Antigravity, Hermes Agent, Claude Code, OpenClaw, Cursor, or any future agent) to `/mcp`, and Agent Colab automatically detects and registers the connected client from its MCP handshake.
 - **Universal Skills Sync**: Import/export standard `SKILL.md` bundles between any local skills directory and the central Vault.
 - **Opt-In Workspace Coding (23 MCP Tools)**: Give connected agents — including **Gemini Web** and **Claude Chat** via Remote MCP — explicit per-project permission (`Disabled` / `Read-Only` / `Full Access`) to list, read, search, edit files, inspect `git diff`, and run commands inside your project folder (protected by hard path jail, sensitive file blocking, and audit logs).
+- **Encrypted Credentials Vault (Private Network Only)**: Store API keys & tokens once (encrypted with AES-256-GCM in `.secrets/`, gitignored). Private-network agents can securely request credentials via MCP (`list_credentials`, `get_credential`, `store_credential`) with per-key locking, tag scoping, and audit logging — strictly blocked over public tunnels.
 - **Private-First + On-Demand Tunnel**: Runs locally on `127.0.0.1` or your private network by default. Toggle a temporary Cloudflare Quick Tunnel (`read-only` or `read-write`, with auto-shutdown TTL) only when needed, or export 1-click **Context Packs** (`.md`) offline.
 
 ---

@@ -169,4 +169,28 @@ describe('@agent-colab/core', () => {
     expect(exported.actions).toHaveLength(1);
     expect(fs.existsSync(path.join(dstDir, 'my-skill', 'SKILL.md'))).toBe(true);
   });
+
+  it('encrypts credentials with AES-256-GCM at rest and decrypts on demand', () => {
+    const saved = vault.upsertCredential({
+      name: 'instabox',
+      value: 'ibk_test_secret_token_9876543210',
+      service: 'InstaBox',
+      envVar: 'INSTABOX_API_KEY',
+      tags: ['infra'],
+      addedBy: 'antigravity@pc',
+    });
+    expect(saved.maskedValue).toBe('ibk_••••3210');
+    expect(saved.allowAgentRead).toBe(true);
+
+    // Raw file on disk must NOT contain the plaintext secret
+    const encFile = fs.readFileSync(path.join(tmpDir, '.secrets', 'credentials.enc.json'), 'utf8');
+    expect(encFile).not.toContain('ibk_test_secret_token_9876543210');
+
+    // Decrypted retrieval returns exact value
+    const revealed = vault.getCredential('instabox');
+    expect(revealed?.value).toBe('ibk_test_secret_token_9876543210');
+
+    expect(vault.deleteCredential('instabox')).toBe(true);
+    expect(vault.getCredential('instabox')).toBeNull();
+  });
 });

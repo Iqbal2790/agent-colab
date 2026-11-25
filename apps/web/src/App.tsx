@@ -6,9 +6,11 @@ import {
   Copy,
   Cpu,
   Download,
+  Eye,
   FolderGit2,
   Globe,
   Home,
+  KeyRound,
   Layers,
   Lock,
   Menu,
@@ -28,6 +30,7 @@ import {
   type AuditEntry,
   type CodingAccessMode,
   type ConnectedAgent,
+  type CredentialMeta,
   type HandoffNote,
   type PersonaProfile,
   type ProjectContext,
@@ -39,7 +42,7 @@ import {
   type TunnelStatus,
 } from './api';
 
-type ViewId = 'dashboard' | 'agents' | 'collab' | 'sync' | 'bridge' | 'search' | 'profile';
+type ViewId = 'dashboard' | 'agents' | 'collab' | 'sync' | 'credentials' | 'bridge' | 'search' | 'profile';
 
 export default function App() {
   const [view, setView] = useState<ViewId>('dashboard');
@@ -70,6 +73,14 @@ export default function App() {
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [connectedAgents, setConnectedAgents] = useState<ConnectedAgent[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditEntry[]>([]);
+  const [credentials, setCredentials] = useState<CredentialMeta[]>([]);
+  const [credName, setCredName] = useState('');
+  const [credService, setCredService] = useState('');
+  const [credEnvVar, setCredEnvVar] = useState('');
+  const [credValue, setCredValue] = useState('');
+  const [credTags, setCredTags] = useState('');
+  const [credNotes, setCredNotes] = useState('');
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, string>>({});
   const [tunnel, setTunnel] = useState<TunnelStatus>({ active: false, provider: 'cloudflared' });
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -117,17 +128,19 @@ export default function App() {
 
   async function loadAll() {
     try {
-      const [h, prof, projList, tasksRes, notesRes, sk, agentsRes, auditRes, tun] = await Promise.all([
-        api.health(),
-        api.getProfile(),
-        api.listProjects(),
-        api.listTasks(),
-        api.listNotes(),
-        api.listSkills(),
-        api.listConnectedAgents(),
-        api.getAuditLogs(60),
-        api.getTunnel(),
-      ]);
+      const [h, prof, projList, tasksRes, notesRes, sk, agentsRes, auditRes, credsRes, tun] =
+        await Promise.all([
+          api.health(),
+          api.getProfile(),
+          api.listProjects(),
+          api.listTasks(),
+          api.listNotes(),
+          api.listSkills(),
+          api.listConnectedAgents(),
+          api.getAuditLogs(60),
+          api.listCredentials(),
+          api.getTunnel(),
+        ]);
       setVaultPath(h.vaultPath);
       setProfileText(prof.profile.content);
       setRulesText(prof.rules.content);
@@ -138,6 +151,7 @@ export default function App() {
       setSkills(sk.skills);
       setConnectedAgents(agentsRes.agents);
       setAuditLogs(auditRes.logs);
+      setCredentials(credsRes.credentials);
       setTunnel(tun);
 
       if (projList.projects.length > 0 && !selectedSlug) {
@@ -364,6 +378,74 @@ export default function App() {
     }
   }
 
+  async function handleSaveCredential(e: React.FormEvent) {
+    e.preventDefault();
+    if (!credName.trim() || !credValue.trim()) return;
+    try {
+      const tags = credTags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      await api.upsertCredential(credName.trim(), {
+        value: credValue.trim(),
+        service: credService.trim() || credName.trim(),
+        envVar: credEnvVar.trim() || undefined,
+        tags,
+        notes: credNotes.trim() || undefined,
+        allowAgentRead: true,
+      });
+      setCredName('');
+      setCredService('');
+      setCredEnvVar('');
+      setCredValue('');
+      setCredTags('');
+      setCredNotes('');
+      await loadAll();
+      flash('Credential encrypted & saved to Vault.');
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function handleToggleCredentialAccess(c: CredentialMeta) {
+    try {
+      await api.upsertCredential(c.name, { allowAgentRead: !c.allowAgentRead });
+      await loadAll();
+      flash(
+        `Credential "${c.name}" is now ${!c.allowAgentRead ? 'readable by private agents' : 'locked'}.`
+      );
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function handleRevealCredential(name: string) {
+    if (revealedSecrets[name]) {
+      setRevealedSecrets((prev) => {
+        const copy = { ...prev };
+        delete copy[name];
+        return copy;
+      });
+      return;
+    }
+    try {
+      const res = await api.revealCredential(name);
+      setRevealedSecrets((prev) => ({ ...prev, [name]: res.credential.value }));
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function handleDeleteCredential(name: string) {
+    try {
+      await api.deleteCredential(name);
+      await loadAll();
+      flash(`Credential "${name}" deleted.`);
+    } catch (err) {
+      fail(err);
+    }
+  }
+
   async function handleStartTunnel() {
     setTunnelBusy(true);
     setErrorMsg('');
@@ -526,6 +608,7 @@ export default function App() {
                 [
                   ['dashboard', 'Overview & Context', Home, `${projects.length}`],
                   ['agents', 'Connected Agents', Cpu, `${connectedAgents.length}`],
+                  ['credentials', 'Credentials Vault', KeyRound, `${credentials.length}`],
                   ['collab', 'Collaboration & Handoffs', MessageSquare, `${allNotes.length}`],
                   ['sync', 'Universal Connector', Layers, `${skills.length}`],
                   ['bridge', 'Web Bridge & Tunnel', Globe, tunnel.active ? 'ON' : 'OFF'],
@@ -717,6 +800,7 @@ export default function App() {
                   [
                     ['search', 'Vault Search (FTS5)', Search],
                     ['agents', 'Connected Agents', Cpu],
+                    ['credentials', 'Credentials Vault', KeyRound],
                     ['collab', 'Agent Handoffs', MessageSquare],
                     ['dashboard', 'Project Contexts', FolderGit2],
                     ['sync', 'Universal Connector', Layers],
@@ -1969,6 +2053,179 @@ export default function App() {
                         ))}
                       </ul>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ============================================================= */}
+            {/* VIEW 3.5: ENCRYPTED CREDENTIALS VAULT                         */}
+            {/* ============================================================= */}
+            {view === 'credentials' && (
+              <div className="space-y-5">
+                <div>
+                  <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                    Encrypted Credentials Vault
+                  </h1>
+                  <p className="text-xs text-slate-500">
+                    Store API keys & tokens once (encrypted with AES-256-GCM in{' '}
+                    <code>.secrets/</code>, gitignored). Private-network agents can request keys
+                    via MCP (<code>get_credential</code>) so you never have to copy-paste them
+                    again. Strictly blocked over public tunnels.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  {/* Add / Update Credential Form */}
+                  <div className="lg:col-span-5 bg-[#EFECE7] rounded-[26px] p-5">
+                    <h2 className="text-[15px] font-bold text-slate-900 mb-3">
+                      Add / Update Credential
+                    </h2>
+                    <form
+                      onSubmit={(e) => void handleSaveCredential(e)}
+                      className="bg-white rounded-[20px] p-4 shadow-sm space-y-2.5"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <input
+                          type="text"
+                          required
+                          value={credName}
+                          onChange={(e) => setCredName(e.target.value)}
+                          placeholder="Key slug (e.g. instabox)"
+                          className="rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={credService}
+                          onChange={(e) => setCredService(e.target.value)}
+                          placeholder="Service (e.g. InstaBox)"
+                          className="rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={credEnvVar}
+                        onChange={(e) => setCredEnvVar(e.target.value)}
+                        placeholder="Env var name (e.g. INSTABOX_API_KEY)"
+                        className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none"
+                      />
+                      <input
+                        type="password"
+                        required
+                        value={credValue}
+                        onChange={(e) => setCredValue(e.target.value)}
+                        placeholder="Secret / API key value"
+                        className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={credTags}
+                        onChange={(e) => setCredTags(e.target.value)}
+                        placeholder="Optional tag scope (e.g. work, infra)"
+                        className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={credNotes}
+                        onChange={(e) => setCredNotes(e.target.value)}
+                        placeholder="Notes (optional)"
+                        className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        className="w-full rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white py-2.5 text-xs font-semibold shadow-indigo-glow saas-transition"
+                      >
+                        Encrypt & Save Credential
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Stored Credentials List */}
+                  <div className="lg:col-span-7 bg-[#EFECE7] rounded-[26px] p-5 space-y-3">
+                    <h2 className="text-[15px] font-bold text-slate-900">
+                      Stored Credentials ({credentials.length})
+                    </h2>
+                    <div className="bg-white rounded-[20px] p-4 shadow-sm">
+                      {credentials.length === 0 ? (
+                        <p className="text-xs text-slate-500 py-8 text-center">
+                          No credentials stored yet. Add an API key on the left or let a connected
+                          agent save one via <code>store_credential</code>.
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-slate-100">
+                          {credentials.map((c) => {
+                            const revealed = revealedSecrets[c.name];
+                            return (
+                              <li key={c.name} className="py-3.5 space-y-2">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-sm font-bold text-slate-900">
+                                        {c.service}
+                                      </span>
+                                      <span className="font-mono text-[11px] text-slate-500">
+                                        ({c.name})
+                                      </span>
+                                      {c.envVar && (
+                                        <span className="rounded-full bg-[#F7F6F3] px-2 py-0.5 font-mono text-[10px] text-slate-700">
+                                          {c.envVar}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="mt-1 font-mono text-xs text-slate-600 break-all">
+                                      {revealed || c.maskedValue}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleRevealCredential(c.name)}
+                                      className="rounded-full bg-[#EFECE7] hover:bg-slate-200 text-slate-700 px-2.5 py-1 text-[11px] font-semibold flex items-center gap-1"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      {revealed ? 'Hide' : 'Reveal'}
+                                    </button>
+                                    {revealed && (
+                                      <button
+                                        type="button"
+                                        onClick={() => copyText(`cred-${c.name}`, revealed)}
+                                        className="rounded-full bg-[#EFECE7] hover:bg-[#4F46E5] hover:text-white text-slate-700 px-2.5 py-1 text-[11px] font-semibold"
+                                      >
+                                        {copiedKey === `cred-${c.name}` ? 'Copied' : 'Copy'}
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleToggleCredentialAccess(c)}
+                                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                        c.allowAgentRead
+                                          ? 'bg-emerald-50 text-emerald-700'
+                                          : 'bg-amber-50 text-amber-700'
+                                      }`}
+                                    >
+                                      {c.allowAgentRead ? 'Agent Access: ON' : 'Locked'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleDeleteCredential(c.name)}
+                                      className="rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 px-2.5 py-1 text-[11px] font-semibold"
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                                  <span>Added by: {c.addedBy}</span>
+                                  {c.tags.length > 0 && <span>· tags: {c.tags.join(', ')}</span>}
+                                  {c.notes && <span>· {c.notes}</span>}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

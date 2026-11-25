@@ -624,5 +624,137 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
     }
   );
 
+  // --- Encrypted Credential Vault Tools (STRICTLY Private Network Only — Blocked over Public Tunnel) ---
+
+  function assertPrivateNetwork(actionLabel: string): void {
+    if (via === 'tunnel') {
+      vault.logAudit({
+        actor: defaultAgent,
+        action: `blocked_${actionLabel}`,
+        resource: 'credentials',
+        via,
+      });
+      throw new Error(
+        'Forbidden: Credential Vault tools are strictly disabled over public tunnels. Connect over your private network (Tailnet / LAN / local).'
+      );
+    }
+  }
+
+  server.tool(
+    'list_credentials',
+    'List stored credential metadata (masked values only — never raw secrets). Private network only.',
+    {},
+    async () => {
+      try {
+        assertPrivateNetwork('list_credentials');
+        const list = vault
+          .listCredentials()
+          .filter((c) => c.tags.length === 0 || isProjectAllowed(c.tags));
+        return textResult(list);
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
+    }
+  );
+
+  server.tool(
+    'get_credential',
+    'Retrieve a decrypted API key or token from the Encrypted Credential Vault so agents do not need the user to re-paste keys. Private network only; audited.',
+    {
+      name: z.string().describe('Credential slug/name, e.g. "instabox", "github", "figma"'),
+      agentName: z.string().optional(),
+    },
+    async ({ name, agentName }) => {
+      try {
+        assertPrivateNetwork('get_credential');
+        const cred = vault.getCredential(name);
+        if (!cred) return errorResult(`Credential "${name}" not found.`);
+        if (cred.tags.length > 0 && !isProjectAllowed(cred.tags)) {
+          return errorResult(`Access denied: credential "${name}" is outside your tag scope.`);
+        }
+        if (!cred.allowAgentRead) {
+          return errorResult(
+            `Access denied: credential "${name}" is locked (allowAgentRead=false). Unlock it in Agent Colab Dashboard.`
+          );
+        }
+        const actor = resolveActor(agentName);
+        vault.logAudit({
+          actor,
+          action: 'read_credential',
+          resource: `credential:${cred.name}`,
+          via,
+        });
+        return textResult(cred);
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
+    }
+  );
+
+  server.tool(
+    'store_credential',
+    'Encrypt and store an API key or token in the Credential Vault so other agents on your private network can reuse it without asking the user again.',
+    {
+      name: z.string().describe('Unique credential slug, e.g. "instabox", "openai", "github"'),
+      value: z.string().describe('Raw secret/token value (encrypted with AES-256-GCM at rest)'),
+      service: z.string().optional().describe('Service name, e.g. "InstaBox", "GitHub"'),
+      envVar: z.string().optional().describe('Standard env var name, e.g. "INSTABOX_API_KEY"'),
+      tags: z.array(z.string()).optional(),
+      notes: z.string().optional(),
+      agentName: z.string().optional(),
+    },
+    async ({ name, value, service, envVar, tags, notes, agentName }) => {
+      if (readOnly) return errorResult('Forbidden: current connection is read-only.');
+      try {
+        assertPrivateNetwork('store_credential');
+        const actor = resolveActor(agentName);
+        const saved = vault.upsertCredential({
+          name,
+          value,
+          service,
+          envVar,
+          tags: tags ?? (allowedTags ? [...allowedTags] : []),
+          notes,
+          addedBy: actor,
+        });
+        vault.logAudit({
+          actor,
+          action: 'store_credential',
+          resource: `credential:${saved.name}`,
+          via,
+        });
+        return textResult(saved);
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
+    }
+  );
+
+  server.tool(
+    'delete_credential',
+    'Remove a stored credential from the Credential Vault. Private network only.',
+    {
+      name: z.string(),
+      agentName: z.string().optional(),
+    },
+    async ({ name, agentName }) => {
+      if (readOnly) return errorResult('Forbidden: current connection is read-only.');
+      try {
+        assertPrivateNetwork('delete_credential');
+        const deleted = vault.deleteCredential(name);
+        const actor = resolveActor(agentName);
+        vault.logAudit({
+          actor,
+          action: 'delete_credential',
+          resource: `credential:${name}`,
+          via,
+        });
+        return textResult({ deleted, name });
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
+    }
+  );
+
   return server;
 }
