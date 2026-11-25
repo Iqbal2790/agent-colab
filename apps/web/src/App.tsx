@@ -27,6 +27,7 @@ import {
   type AgentAdapterId,
   type CodingAccessMode,
   type HandoffNote,
+  type PersonaProfile,
   type ProjectContext,
   type ProjectSummary,
   type SearchResult,
@@ -46,6 +47,10 @@ export default function App() {
   const [remoteServerUrl, setRemoteServerUrl] = useState(() =>
     typeof window !== 'undefined' ? `${window.location.origin}/mcp` : 'http://127.0.0.1:4242/mcp'
   );
+  const [remoteDeviceName, setRemoteDeviceName] = useState('');
+  const [remoteHermesProfile, setRemoteHermesProfile] = useState('');
+  const [remotePersona, setRemotePersona] = useState('');
+  const [remoteTags, setRemoteTags] = useState('');
 
   const [vaultPath, setVaultPath] = useState('');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -57,6 +62,9 @@ export default function App() {
   const [projectNotes, setProjectNotes] = useState<HandoffNote[]>([]);
   const [profileText, setProfileText] = useState('');
   const [rulesText, setRulesText] = useState('');
+  const [personas, setPersonas] = useState<PersonaProfile[]>([]);
+  const [newPersonaName, setNewPersonaName] = useState('');
+  const [newPersonaContent, setNewPersonaContent] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
   const [tunnel, setTunnel] = useState<TunnelStatus>({ active: false, provider: 'cloudflared' });
@@ -70,10 +78,12 @@ export default function App() {
   // Forms
   const [newProjSlug, setNewProjSlug] = useState('');
   const [newProjName, setNewProjName] = useState('');
+  const [newProjTags, setNewProjTags] = useState('');
   const [newProjRepoPath, setNewProjRepoPath] = useState('');
   const [newProjCodingAccess, setNewProjCodingAccess] = useState<CodingAccessMode>('disabled');
   const [newProjDesc, setNewProjDesc] = useState('');
   const [projContentDraft, setProjContentDraft] = useState('');
+  const [projTagsDraft, setProjTagsDraft] = useState('');
   const [projRepoDraft, setProjRepoDraft] = useState('');
   const [projAccessDraft, setProjAccessDraft] = useState<CodingAccessMode>('disabled');
 
@@ -117,6 +127,7 @@ export default function App() {
       setVaultPath(h.vaultPath);
       setProfileText(prof.profile.content);
       setRulesText(prof.rules.content);
+      setPersonas(prof.personas ?? []);
       setProjects(projList.projects);
       setAllTasks(tasksRes.tasks);
       setAllNotes(notesRes.notes);
@@ -143,6 +154,7 @@ export default function App() {
       const detail = await api.getProject(slug);
       setProjectDetail(detail.project);
       setProjContentDraft(detail.project.content);
+      setProjTagsDraft((detail.project.tags ?? []).join(', '));
       setProjRepoDraft(detail.project.repoPath ?? '');
       setProjAccessDraft(detail.project.codingAccess ?? 'disabled');
       setProjectTasks(detail.tasks);
@@ -187,9 +199,14 @@ export default function App() {
     e.preventDefault();
     if (!newProjSlug.trim()) return;
     try {
+      const parsedTags = newProjTags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
       const res = await api.upsertProject(newProjSlug.trim(), {
         name: newProjName.trim() || newProjSlug.trim(),
         status: 'active',
+        tags: parsedTags,
         repoPath: newProjRepoPath.trim() || undefined,
         codingAccess: newProjCodingAccess,
         content:
@@ -198,6 +215,7 @@ export default function App() {
       });
       setNewProjSlug('');
       setNewProjName('');
+      setNewProjTags('');
       setNewProjRepoPath('');
       setNewProjCodingAccess('disabled');
       setNewProjDesc('');
@@ -213,15 +231,44 @@ export default function App() {
   async function handleSaveProject() {
     if (!projectDetail) return;
     try {
+      const parsedTags = projTagsDraft
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
       await api.upsertProject(projectDetail.slug, {
         name: projectDetail.name,
         status: projectDetail.status,
+        tags: parsedTags,
         repoPath: projRepoDraft.trim(),
         codingAccess: projAccessDraft,
         content: projContentDraft,
       });
       await Promise.all([loadAll(), loadProject(projectDetail.slug)]);
       flash('Project context & workspace permissions saved.');
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function handleSavePersona(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newPersonaName.trim() || !newPersonaContent.trim()) return;
+    try {
+      await api.upsertPersona(newPersonaName.trim(), newPersonaContent.trim());
+      setNewPersonaName('');
+      setNewPersonaContent('');
+      await loadAll();
+      flash('Persona profile saved.');
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function handleDeletePersona(name: string) {
+    try {
+      await api.deletePersona(name);
+      await loadAll();
+      flash(`Persona "${name}" deleted.`);
     } catch (err) {
       fail(err);
     }
@@ -372,15 +419,41 @@ export default function App() {
       : '';
 
   function buildRemoteSetup(agent: AgentAdapterId, serverUrl: string) {
-    const cleanUrl = serverUrl.trim() || 'http://127.0.0.1:4242/mcp';
-    const cliCommand = `npx @agent-colab/cli connect ${agent} --mode http --url ${cleanUrl}`;
+    const baseUrl = serverUrl.trim() || 'http://127.0.0.1:4242/mcp';
+    const hermesProf = agent === 'hermes' ? remoteHermesProfile.trim() : '';
+    const deviceLabel = remoteDeviceName.trim();
+    const personaLabel = remotePersona.trim();
+    const tagsLabel = remoteTags.trim();
+
+    const identityBase = hermesProf ? `${agent}:${hermesProf}` : agent;
+    const identity = deviceLabel ? `${identityBase}@${deviceLabel}` : hermesProf ? identityBase : '';
+
+    let finalUrl = baseUrl;
+    try {
+      const u = new URL(baseUrl);
+      if (identity) u.searchParams.set('agent', identity);
+      if (personaLabel) u.searchParams.set('persona', personaLabel);
+      if (tagsLabel) u.searchParams.set('tags', tagsLabel);
+      finalUrl = u.toString();
+    } catch {
+      finalUrl = baseUrl;
+    }
+
+    const cliParts = [`npx @agent-colab/cli connect ${agent} --mode http --url "${baseUrl}"`];
+    if (identity) cliParts.push(`--identity "${identity}"`);
+    if (personaLabel) cliParts.push(`--persona "${personaLabel}"`);
+    if (tagsLabel) cliParts.push(`--tags "${tagsLabel}"`);
+    if (hermesProf) cliParts.push(`--profile "${hermesProf}"`);
+    const cliCommand = cliParts.join(' ');
 
     if (agent === 'hermes') {
       return {
-        targetFile: '~/.hermes/config.yaml',
+        targetFile: hermesProf
+          ? `~/.hermes/profiles/${hermesProf}/config.yaml`
+          : '~/.hermes/config.yaml',
         format: 'YAML',
         cliCommand,
-        snippet: `mcp_servers:\n  agent-colab:\n    url: "${cleanUrl}"`,
+        snippet: `mcp_servers:\n  agent-colab:\n    url: "${finalUrl}"`,
       };
     }
     if (agent === 'openclaw') {
@@ -389,7 +462,7 @@ export default function App() {
         format: 'JSON',
         cliCommand,
         snippet: JSON.stringify(
-          { mcp: { servers: { 'agent-colab': { url: cleanUrl } } } },
+          { mcp: { servers: { 'agent-colab': { url: finalUrl } } } },
           null,
           2
         ),
@@ -401,7 +474,7 @@ export default function App() {
         format: 'JSON',
         cliCommand,
         snippet: JSON.stringify(
-          { mcpServers: { 'agent-colab': { type: 'http', url: cleanUrl } } },
+          { mcpServers: { 'agent-colab': { type: 'http', url: finalUrl } } },
           null,
           2
         ),
@@ -413,7 +486,7 @@ export default function App() {
         format: 'JSON',
         cliCommand,
         snippet: JSON.stringify(
-          { mcpServers: { 'agent-colab': { url: cleanUrl } } },
+          { mcpServers: { 'agent-colab': { url: finalUrl } } },
           null,
           2
         ),
@@ -424,7 +497,7 @@ export default function App() {
       format: 'JSON',
       cliCommand,
       snippet: JSON.stringify(
-        { mcpServers: { 'agent-colab': { url: cleanUrl } } },
+        { mcpServers: { 'agent-colab': { url: finalUrl } } },
         null,
         2
       ),
@@ -868,17 +941,31 @@ export default function App() {
                               </button>
                             </div>
                             <div className="mb-3 space-y-2.5 pb-3 border-b border-slate-100">
-                              <div>
-                                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                                  Workspace Folder (repoPath on host machine)
-                                </label>
-                                <input
-                                  type="text"
-                                  value={projRepoDraft}
-                                  onChange={(e) => setProjRepoDraft(e.target.value)}
-                                  placeholder="e.g. C:\Projects\my-app or /srv/repos/my-app"
-                                  className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
-                                />
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                                    Workspace Folder (repoPath)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={projRepoDraft}
+                                    onChange={(e) => setProjRepoDraft(e.target.value)}
+                                    placeholder="e.g. /srv/repos/my-app"
+                                    className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                                    Tags (for multi-profile scope)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={projTagsDraft}
+                                    onChange={(e) => setProjTagsDraft(e.target.value)}
+                                    placeholder="e.g. work, backend"
+                                    className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-[11px] text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
+                                  />
+                                </div>
                               </div>
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <span className="text-[11px] font-semibold text-slate-500">
@@ -1907,6 +1994,91 @@ export default function App() {
                     />
                   </div>
                 </div>
+
+                {/* Multi-Persona Profiles (for multi-profile Hermes & multi-device setups) */}
+                <div className="pt-4 border-t border-slate-200/70 space-y-3">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Multi-Persona Profiles ({personas.length})
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Create separate persona rules (e.g. <code>work</code>, <code>personal</code>,{' '}
+                      <code>research</code>) and load them via <code>?persona=work</code> on any
+                      device or Hermes profile.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                    <form
+                      onSubmit={(e) => void handleSavePersona(e)}
+                      className="lg:col-span-5 bg-white rounded-[20px] p-4 shadow-sm space-y-2.5"
+                    >
+                      <input
+                        type="text"
+                        value={newPersonaName}
+                        onChange={(e) => setNewPersonaName(e.target.value)}
+                        placeholder="Persona name (e.g. work, personal)"
+                        className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-800 focus:outline-none"
+                      />
+                      <textarea
+                        value={newPersonaContent}
+                        onChange={(e) => setNewPersonaContent(e.target.value)}
+                        rows={5}
+                        placeholder="Persona instructions, tone, or work-specific rules..."
+                        className="w-full rounded-xl bg-[#F7F6F3] p-3 font-mono text-xs text-slate-800 focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow"
+                      >
+                        Save Persona
+                      </button>
+                    </form>
+
+                    <div className="lg:col-span-7 bg-white rounded-[20px] p-4 shadow-sm">
+                      {personas.length === 0 ? (
+                        <p className="text-xs text-slate-500 py-6 text-center">
+                          No personas yet. Add one on the left (e.g. <code>work</code> or{' '}
+                          <code>personal</code>) for multi-profile Hermes or multi-device setups.
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-slate-100">
+                          {personas.map((per) => (
+                            <li key={per.name} className="py-3 flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-900">
+                                  profile/personas/{per.name}.md
+                                </p>
+                                <p className="mt-1 text-[11px] text-slate-600 whitespace-pre-wrap line-clamp-3">
+                                  {per.content}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNewPersonaName(per.name);
+                                    setNewPersonaContent(per.content);
+                                  }}
+                                  className="rounded-full bg-[#EFECE7] px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDeletePersona(per.name)}
+                                  className="rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-700"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </main>
@@ -1958,6 +2130,18 @@ export default function App() {
                     value={newProjName}
                     onChange={(e) => setNewProjName(e.target.value)}
                     placeholder="e.g. My Web App"
+                    className="w-full rounded-xl bg-white px-3.5 py-2.5 text-xs text-slate-900 shadow-sm focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
+                    Tags (optional, comma-separated for multi-profile scoping)
+                  </label>
+                  <input
+                    type="text"
+                    value={newProjTags}
+                    onChange={(e) => setNewProjTags(e.target.value)}
+                    placeholder="e.g. work, backend or personal"
                     className="w-full rounded-xl bg-white px-3.5 py-2.5 text-xs text-slate-900 shadow-sm focus:outline-none"
                   />
                 </div>
@@ -2062,6 +2246,68 @@ export default function App() {
                       onChange={(e) => setRemoteServerUrl(e.target.value)}
                       className="w-full rounded-xl bg-white px-3.5 py-2.5 font-mono text-xs text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
                     />
+                  </div>
+
+                  {/* Multi-Device & Multi-Profile Identity Options */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Device Label (multi-device)
+                      </label>
+                      <input
+                        type="text"
+                        value={remoteDeviceName}
+                        onChange={(e) => setRemoteDeviceName(e.target.value)}
+                        placeholder="e.g. laptop, pc-home"
+                        className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
+                      />
+                    </div>
+
+                    {remoteSetupAgent.agent === 'hermes' && (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Hermes Profile Name (optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={remoteHermesProfile}
+                          onChange={(e) => setRemoteHermesProfile(e.target.value)}
+                          placeholder="e.g. work, personal"
+                          className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Persona Profile (optional)
+                      </label>
+                      <select
+                        value={remotePersona}
+                        onChange={(e) => setRemotePersona(e.target.value)}
+                        className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
+                      >
+                        <option value="">None (global profile only)</option>
+                        {personas.map((p) => (
+                          <option key={p.name} value={p.name}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Tag Scope Filter (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={remoteTags}
+                        onChange={(e) => setRemoteTags(e.target.value)}
+                        placeholder="e.g. work (isolates projects)"
+                        className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
+                      />
+                    </div>
                   </div>
 
                   {/* Option 1: 1-line CLI */}

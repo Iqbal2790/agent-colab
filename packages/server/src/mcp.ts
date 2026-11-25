@@ -16,6 +16,12 @@ import {
 export interface CreateMcpOptions {
   readOnly?: boolean;
   via?: 'mcp' | 'tunnel';
+  /** Default agent+device identity, e.g. "antigravity@laptop" or "hermes:work@vps" */
+  defaultAgent?: string;
+  /** Optional persona profile name to include in get_user_profile, e.g. "work" or "personal" */
+  persona?: string;
+  /** Optional tag allowlist to scope projects/tasks/notes/search, e.g. ["work"] */
+  allowedTags?: string[];
 }
 
 function textResult(data: unknown) {
@@ -39,6 +45,39 @@ function errorResult(message: string) {
 export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions): McpServer {
   const readOnly = options?.readOnly ?? false;
   const via = options?.via ?? 'mcp';
+  const defaultAgent = options?.defaultAgent?.trim() || 'mcp-client';
+  const activePersona = options?.persona?.trim() || undefined;
+  const allowedTags =
+    options?.allowedTags && options.allowedTags.length > 0
+      ? options.allowedTags.map((t) => t.trim().toLowerCase()).filter(Boolean)
+      : undefined;
+
+  function resolveActor(agentName?: string): string {
+    const cleaned = agentName?.trim();
+    if (!cleaned || cleaned === 'unknown-agent') return defaultAgent;
+    // If connection carries a device suffix (e.g. antigravity@laptop) and caller only sent "antigravity", preserve device identity
+    if (defaultAgent.includes('@') && !cleaned.includes('@') && defaultAgent.startsWith(cleaned)) {
+      return defaultAgent;
+    }
+    return cleaned;
+  }
+
+  function isProjectAllowed(tags: string[]): boolean {
+    if (!allowedTags || allowedTags.length === 0) return true;
+    const lowered = new Set(tags.map((t) => t.toLowerCase()));
+    return allowedTags.some((t) => lowered.has(t));
+  }
+
+  function assertProjectAllowed(projectSlug: string): void {
+    if (!allowedTags) return;
+    const proj = vault.getProject(projectSlug);
+    if (!proj) throw new Error(`Project "${projectSlug}" not found.`);
+    if (!isProjectAllowed(proj.tags)) {
+      throw new Error(
+        `Access denied: project "${projectSlug}" is outside this connection's tag scope (${allowedTags.join(', ')}).`
+      );
+    }
+  }
 
   const server = new McpServer({
     name: 'agent-colab',
@@ -47,23 +86,32 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
 
   server.tool(
     'get_user_profile',
-    'Read the user profile, working preferences, and global agent rules so you understand the user without asking them to repeat themselves.',
-    {},
-    async () => {
-      vault.logAudit({ actor: 'mcp-client', action: 'read', resource: 'profile', via });
+    'Read the user profile, working preferences, global agent rules, and active persona (if configured for this device/profile).',
+    {
+      persona: z.string().optional().describe('Optional persona name override, e.g. "work" or "personal"'),
+    },
+    async ({ persona }) => {
+      const targetPersona = persona?.trim() || activePersona;
+      const personaDoc = targetPersona ? vault.getPersona(targetPersona) : null;
+      vault.logAudit({ actor: defaultAgent, action: 'read', resource: 'profile', via });
       return textResult({
+        identity: defaultAgent,
+        tagScope: allowedTags ?? 'all',
         profile: vault.getUserProfile(),
         globalRules: vault.getGlobalRules(),
+        ...(personaDoc ? { persona: personaDoc } : {}),
+        availablePersonas: vault.listPersonas().map((p) => p.name),
       });
     }
   );
 
   server.tool(
     'list_projects',
-    'List all projects tracked in Agent Colab with their status, task count, and handoff note count.',
+    'List all projects tracked in Agent Colab (filtered by tag scope if configured on this connection).',
     {},
     async () => {
-      return textResult(vault.listProjects());
+      const projects = vault.listProjects().filter((p) => isProjectAllowed(p.tags));
+      return textResult(projects);
     }
   );
 
@@ -77,7 +125,12 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
     async ({ projectSlug, noteLimit }) => {
       const project = vault.getProject(projectSlug);
       if (!project) return errorResult(`Project "${projectSlug}" not found.`);
-      vault.logAudit({ actor: 'mcp-client', action: 'read', resource: `project:${projectSlug}`, via });
+      if (!isProjectAllowed(project.tags)) {
+        return errorResult(
+          `Access denied: project "${projectSlug}" is outside this connection's tag scope (${allowedTags?.join(', ')}).`
+        );
+      }
+      vault.logAudit({ actor: defaultAgent, action: 'read', resource: `project:${projectSlug}`, via });
       return textResult({
         project,
         tasks: vault.listTasks(projectSlug),
@@ -96,12 +149,25 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       tags: z.array(z.string()).optional(),
       repoPath: z.string().optional(),
       content: z.string().describe('Markdown summary of project architecture, goals, and current status'),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, name, status, tags, repoPath, content, agentName }) => {
       if (readOnly) return errorResult('Forbidden: current connection is read-only.');
-      const updated = vault.upsertProject(projectSlug, { name, status, tags, repoPath, content });
-      vault.logAudit({ actor: agentName, action: 'update_project', resource: `project:${projectSlug}`, via });
+      const existing = vault.getProject(projectSlug);
+      if (existing && !isProjectAllowed(existing.tags)) {
+        return errorResult(`Access denied: project "${projectSlug}" is outside your tag scope.`);
+      }
+      const mergedTags =
+        tags ?? (existing ? existing.tags : allowedTags ? [...allowedTags] : []);
+      const actor = resolveActor(agentName);
+      const updated = vault.upsertProject(projectSlug, {
+        name,
+        status,
+        tags: mergedTags,
+        repoPath,
+        content,
+      });
+      vault.logAudit({ actor, action: 'update_project', resource: `project:${projectSlug}`, via });
       return textResult(updated);
     }
   );
@@ -113,14 +179,16 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       projectSlug: z.string(),
       title: z.string(),
       rationale: z.string(),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, title, rationale, agentName }) => {
       if (readOnly) return errorResult('Forbidden: current connection is read-only.');
       try {
-        const updated = vault.appendDecision(projectSlug, title, rationale, agentName);
-        vault.logAudit({ actor: agentName, action: 'append_decision', resource: `project:${projectSlug}`, via });
-        return textResult({ ok: true, projectSlug: updated.slug, decisionTitle: title });
+        assertProjectAllowed(projectSlug);
+        const actor = resolveActor(agentName);
+        const updated = vault.appendDecision(projectSlug, title, rationale, actor);
+        vault.logAudit({ actor, action: 'append_decision', resource: `project:${projectSlug}`, via });
+        return textResult({ ok: true, projectSlug: updated.slug, decisionTitle: title, recordedBy: actor });
       } catch (err) {
         return errorResult((err as Error).message);
       }
@@ -129,13 +197,24 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
 
   server.tool(
     'list_tasks',
-    'List tasks across all projects or for a specific project, optionally filtered by status.',
+    'List tasks across all accessible projects or for a specific project, optionally filtered by status.',
     {
       projectSlug: z.string().optional(),
       status: z.enum(['todo', 'in_progress', 'handoff', 'blocked', 'done']).optional(),
     },
     async ({ projectSlug, status }) => {
-      return textResult(vault.listTasks(projectSlug, status));
+      try {
+        if (projectSlug) assertProjectAllowed(projectSlug);
+        const allowedSlugs = new Set(
+          vault.listProjects().filter((p) => isProjectAllowed(p.tags)).map((p) => p.slug)
+        );
+        const tasks = vault
+          .listTasks(projectSlug, status)
+          .filter((t) => allowedSlugs.has(t.projectSlug));
+        return textResult(tasks);
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
     }
   );
 
@@ -147,19 +226,21 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       title: z.string(),
       priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
       body: z.string().optional(),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, title, priority, body, agentName }) => {
       if (readOnly) return errorResult('Forbidden: current connection is read-only.');
       try {
+        assertProjectAllowed(projectSlug);
+        const actor = resolveActor(agentName);
         const task = vault.createTask({
           projectSlug,
           title,
           priority,
           body,
-          createdBy: agentName,
+          createdBy: actor,
         });
-        vault.logAudit({ actor: agentName, action: 'create_task', resource: `task:${projectSlug}/${task.id}`, via });
+        vault.logAudit({ actor, action: 'create_task', resource: `task:${projectSlug}/${task.id}`, via });
         return textResult(task);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -169,18 +250,20 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
 
   server.tool(
     'claim_task',
-    'Claim and lock a task so other agents know you are actively working on it.',
+    'Claim and lock a task so other agents/devices know you are actively working on it.',
     {
       projectSlug: z.string(),
       taskId: z.string(),
-      agentName: z.string().describe('Your agent identifier, e.g. "antigravity" or "hermes"'),
+      agentName: z.string().optional().describe('Optional agent@device identifier (defaults to connection identity)'),
       lockMinutes: z.number().int().min(5).max(240).optional().default(30),
     },
     async ({ projectSlug, taskId, agentName, lockMinutes }) => {
       if (readOnly) return errorResult('Forbidden: current connection is read-only.');
       try {
-        const task = vault.claimTask(projectSlug, taskId, agentName, lockMinutes);
-        vault.logAudit({ actor: agentName, action: 'claim_task', resource: `task:${projectSlug}/${taskId}`, via });
+        assertProjectAllowed(projectSlug);
+        const actor = resolveActor(agentName);
+        const task = vault.claimTask(projectSlug, taskId, actor, lockMinutes);
+        vault.logAudit({ actor, action: 'claim_task', resource: `task:${projectSlug}/${taskId}`, via });
         return textResult(task);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -198,13 +281,15 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
       body: z.string().optional(),
       releaseLock: z.boolean().optional(),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, taskId, status, priority, body, releaseLock, agentName }) => {
       if (readOnly) return errorResult('Forbidden: current connection is read-only.');
       try {
+        assertProjectAllowed(projectSlug);
+        const actor = resolveActor(agentName);
         const task = vault.updateTask(projectSlug, taskId, { status, priority, body, releaseLock });
-        vault.logAudit({ actor: agentName, action: 'update_task', resource: `task:${projectSlug}/${taskId}`, via });
+        vault.logAudit({ actor, action: 'update_task', resource: `task:${projectSlug}/${taskId}`, via });
         return textResult(task);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -214,10 +299,10 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
 
   server.tool(
     'leave_handoff_note',
-    'Leave a structured handoff note for the user or the next AI agent picking up this project.',
+    'Leave a structured handoff note for the user or the next AI agent/device picking up this project.',
     {
       projectSlug: z.string(),
-      agentName: z.string().describe('Your agent identifier, e.g. "antigravity", "hermes", "claude"'),
+      agentName: z.string().optional().describe('Optional agent@device identifier (defaults to connection identity)'),
       title: z.string(),
       summary: z.string(),
       nextSteps: z.array(z.string()).optional().default([]),
@@ -227,16 +312,18 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
     async ({ projectSlug, agentName, title, summary, nextSteps, relatedTaskId, body }) => {
       if (readOnly) return errorResult('Forbidden: current connection is read-only.');
       try {
+        assertProjectAllowed(projectSlug);
+        const actor = resolveActor(agentName);
         const note = vault.createNote({
           projectSlug,
-          authorAgent: agentName,
+          authorAgent: actor,
           title,
           summary,
           nextSteps,
           relatedTaskId,
           body,
         });
-        vault.logAudit({ actor: agentName, action: 'leave_handoff_note', resource: `note:${projectSlug}/${note.id}`, via });
+        vault.logAudit({ actor, action: 'leave_handoff_note', resource: `note:${projectSlug}/${note.id}`, via });
         return textResult(note);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -246,25 +333,42 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
 
   server.tool(
     'read_handoff_notes',
-    'Read recent handoff notes left by other agents on a project.',
+    'Read recent handoff notes left by other agents/devices on accessible projects.',
     {
       projectSlug: z.string().optional(),
       limit: z.number().int().min(1).max(50).optional().default(10),
     },
     async ({ projectSlug, limit }) => {
-      return textResult(vault.listNotes(projectSlug, limit));
+      try {
+        if (projectSlug) assertProjectAllowed(projectSlug);
+        const allowedSlugs = new Set(
+          vault.listProjects().filter((p) => isProjectAllowed(p.tags)).map((p) => p.slug)
+        );
+        const notes = vault
+          .listNotes(projectSlug, limit)
+          .filter((n) => allowedSlugs.has(n.projectSlug));
+        return textResult(notes);
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
     }
   );
 
   server.tool(
     'search_vault',
-    'Full-text search across user profile, projects, tasks, handoff notes, and skills.',
+    'Full-text search across user profile, accessible projects, tasks, handoff notes, and skills.',
     {
       query: z.string(),
       limit: z.number().int().min(1).max(50).optional().default(15),
     },
     async ({ query, limit }) => {
-      return textResult(vault.search(query, limit));
+      const allowedSlugs = new Set(
+        vault.listProjects().filter((p) => isProjectAllowed(p.tags)).map((p) => p.slug)
+      );
+      const results = vault
+        .search(query, limit)
+        .filter((r) => !r.projectSlug || allowedSlugs.has(r.projectSlug));
+      return textResult(results);
     }
   );
 
@@ -303,6 +407,11 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
     const project = vault.getProject(projectSlug);
     if (!project) {
       throw new Error(`Project "${projectSlug}" not found.`);
+    }
+    if (!isProjectAllowed(project.tags)) {
+      throw new Error(
+        `Access denied: project "${projectSlug}" is outside this connection's tag scope (${allowedTags?.join(', ')}).`
+      );
     }
     if (!project.repoPath) {
       throw new Error(
@@ -432,13 +541,13 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       projectSlug: z.string(),
       filePath: z.string(),
       content: z.string(),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, filePath, content, agentName }) => {
       try {
         const repoPath = resolveWorkspace(projectSlug, 'write');
         const result = writeWorkspaceFile(repoPath, filePath, content);
-        vault.logAudit({ actor: agentName, action: 'fs_write_file', resource: `${projectSlug}/${filePath}`, via });
+        vault.logAudit({ actor: resolveActor(agentName), action: 'fs_write_file', resource: `${projectSlug}/${filePath}`, via });
         return textResult(result);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -454,13 +563,13 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       filePath: z.string(),
       target: z.string(),
       replacement: z.string(),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, filePath, target, replacement, agentName }) => {
       try {
         const repoPath = resolveWorkspace(projectSlug, 'write');
         const result = editWorkspaceFile(repoPath, filePath, target, replacement);
-        vault.logAudit({ actor: agentName, action: 'fs_edit_file', resource: `${projectSlug}/${filePath}`, via });
+        vault.logAudit({ actor: resolveActor(agentName), action: 'fs_edit_file', resource: `${projectSlug}/${filePath}`, via });
         return textResult(result);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -474,13 +583,13 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
     {
       projectSlug: z.string(),
       filePath: z.string(),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, filePath, agentName }) => {
       try {
         const repoPath = resolveWorkspace(projectSlug, 'write');
         const result = deleteWorkspaceFile(repoPath, filePath);
-        vault.logAudit({ actor: agentName, action: 'fs_delete_file', resource: `${projectSlug}/${filePath}`, via });
+        vault.logAudit({ actor: resolveActor(agentName), action: 'fs_delete_file', resource: `${projectSlug}/${filePath}`, via });
         return textResult(result);
       } catch (err) {
         return errorResult((err as Error).message);
@@ -495,14 +604,14 @@ export function createMcpServer(vault: VaultManager, options?: CreateMcpOptions)
       projectSlug: z.string(),
       command: z.string(),
       timeoutMs: z.number().int().min(1000).max(120000).optional().default(30000),
-      agentName: z.string().default('unknown-agent'),
+      agentName: z.string().optional(),
     },
     async ({ projectSlug, command, timeoutMs, agentName }) => {
       try {
         const repoPath = resolveWorkspace(projectSlug, 'write');
         const result = runWorkspaceCommand(repoPath, command, timeoutMs);
         vault.logAudit({
-          actor: agentName,
+          actor: resolveActor(agentName),
           action: 'run_project_command',
           resource: `${projectSlug}`,
           via,

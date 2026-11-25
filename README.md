@@ -68,6 +68,22 @@ By default, `docker-compose.yml` binds to `127.0.0.1:4242` and persists your Vau
   ```
 - **Gemini Web & Claude Chat**: Open the **Web Bridge** tab → start the **On-Demand Tunnel** → copy the **Remote MCP URL** into Gemini Web (**Customize → Connectors → + Custom**) or Claude Chat (**Settings → Connectors**).
 
+### Multi-Device & Multi-Profile Hermes
+
+Connect multiple machines (e.g., home PC + laptop) or multiple Hermes profiles (`work` vs `personal`) to the same Agent Colab hub using query parameters on `/mcp` or CLI flags:
+
+```bash
+# Same agent on 2 devices (distinct locks & handoff attribution)
+node packages/cli/dist/index.js connect antigravity --mode http --url http://<vps-tailscale-ip>:4242/mcp --identity antigravity@pc-home
+node packages/cli/dist/index.js connect antigravity --mode http --url http://<vps-tailscale-ip>:4242/mcp --identity antigravity@laptop
+
+# Multi-profile Hermes with isolated personas & project tag scopes
+node packages/cli/dist/index.js connect hermes --profile work --url http://<vps-tailscale-ip>:4242/mcp --identity hermes:work@laptop --persona work --tags work
+node packages/cli/dist/index.js connect hermes --profile personal --url http://<vps-tailscale-ip>:4242/mcp --identity hermes:personal@laptop --persona personal --tags personal
+```
+
+You can also configure **Device Label**, **Hermes Profile**, **Persona**, and **Tag Scope** directly from the **Remote Setup** modal in the Web Dashboard.
+
 ---
 
 ## Installing the Agent Colab Skill (Auto-Sync Memory)

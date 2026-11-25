@@ -68,37 +68,52 @@ program
   .description('Import or export skills & MCP configs between supported agents and Vault')
   .requiredOption('-a, --agent <agent>', 'Target agent: antigravity | hermes | claude-code | openclaw | cursor')
   .requiredOption('-d, --direction <direction>', 'Direction: import | export')
+  .option('--profile <name>', 'Hermes named profile (uses ~/.hermes/profiles/<name>)')
+  .option('--hermes-home <path>', 'Custom HERMES_HOME directory (e.g. ~/.hermes-work)')
   .option('--dry-run', 'Preview changes without modifying any files', false)
   .option('-v, --vault <path>', 'Path to Vault directory')
-  .action((opts: { agent: AgentAdapterId; direction: 'import' | 'export'; dryRun: boolean; vault?: string }) => {
-    const vault = new VaultManager(opts.vault);
-    vault.init();
-    const adapter = createAdapters()[opts.agent];
-    if (!adapter) {
-      console.error(`Unknown agent "${opts.agent}". Supported: antigravity, hermes, claude-code, openclaw, cursor`);
-      process.exit(1);
-    }
+  .action(
+    (opts: {
+      agent: AgentAdapterId;
+      direction: 'import' | 'export';
+      profile?: string;
+      hermesHome?: string;
+      dryRun: boolean;
+      vault?: string;
+    }) => {
+      const vault = new VaultManager(opts.vault);
+      vault.init();
+      const adapter = createAdapters({
+        hermes: { profile: opts.profile, hermesHome: opts.hermesHome },
+      })[opts.agent];
+      if (!adapter) {
+        console.error(
+          `Unknown agent "${opts.agent}". Supported: antigravity, hermes, claude-code, openclaw, cursor`
+        );
+        process.exit(1);
+      }
 
-    const res =
-      opts.direction === 'import'
-        ? adapter.importToVault(vault, { dryRun: opts.dryRun })
-        : adapter.exportFromVault(vault, { dryRun: opts.dryRun });
+      const res =
+        opts.direction === 'import'
+          ? adapter.importToVault(vault, { dryRun: opts.dryRun })
+          : adapter.exportFromVault(vault, { dryRun: opts.dryRun });
 
-    console.log(
-      `\n[${res.dryRun ? 'DRY RUN' : 'APPLIED'}] ${res.agent} (${res.direction}) — ${res.actions.length} item(s):`
-    );
-    for (const action of res.actions) {
-      const redactNote =
-        action.redactedKeys && action.redactedKeys.length > 0
-          ? ` (redacted secrets: ${action.redactedKeys.join(', ')})`
-          : '';
-      console.log(`  - [${action.operation.toUpperCase()}] ${action.kind}: ${action.name}${redactNote}`);
+      console.log(
+        `\n[${res.dryRun ? 'DRY RUN' : 'APPLIED'}] ${adapter.displayName} (${res.direction}) — ${res.actions.length} item(s):`
+      );
+      for (const action of res.actions) {
+        const redactNote =
+          action.redactedKeys && action.redactedKeys.length > 0
+            ? ` (redacted secrets: ${action.redactedKeys.join(', ')})`
+            : '';
+        console.log(`  - [${action.operation.toUpperCase()}] ${action.kind}: ${action.name}${redactNote}`);
+      }
+      if (res.backupPath) {
+        console.log(`  Backup saved to: ${res.backupPath}`);
+      }
+      vault.close();
     }
-    if (res.backupPath) {
-      console.log(`  Backup saved to: ${res.backupPath}`);
-    }
-    vault.close();
-  });
+  );
 
 program
   .command('connect')
@@ -106,25 +121,59 @@ program
   .argument('<agent>', 'Target agent: antigravity | hermes | claude-code | openclaw | cursor')
   .option('-m, --mode <mode>', 'Transport mode: http | stdio', 'http')
   .option('-u, --url <url>', 'MCP HTTP URL', 'http://127.0.0.1:4242/mcp')
+  .option('--identity <id>', 'Device/profile identity, e.g. antigravity@laptop or hermes:work@pc')
+  .option('--persona <name>', 'Persona profile to auto-load, e.g. work or personal')
+  .option('--tags <tags>', 'Comma-separated project tags scope, e.g. work,backend')
+  .option('--profile <name>', 'Hermes named profile (uses ~/.hermes/profiles/<name>)')
+  .option('--hermes-home <path>', 'Custom HERMES_HOME directory (e.g. ~/.hermes-work)')
   .option('--dry-run', 'Preview config change without writing', false)
   .option('-v, --vault <path>', 'Path to Vault directory')
-  .action((agent: AgentAdapterId, opts: { mode: 'http' | 'stdio'; url: string; dryRun: boolean; vault?: string }) => {
-    const adapter = createAdapters()[agent];
-    if (!adapter) {
-      console.error(`Unknown agent "${agent}". Supported: antigravity, hermes, claude-code, openclaw, cursor`);
-      process.exit(1);
+  .action(
+    (
+      agent: AgentAdapterId,
+      opts: {
+        mode: 'http' | 'stdio';
+        url: string;
+        identity?: string;
+        persona?: string;
+        tags?: string;
+        profile?: string;
+        hermesHome?: string;
+        dryRun: boolean;
+        vault?: string;
+      }
+    ) => {
+      const adapter = createAdapters({
+        hermes: { profile: opts.profile, hermesHome: opts.hermesHome },
+      })[agent];
+      if (!adapter) {
+        console.error(
+          `Unknown agent "${agent}". Supported: antigravity, hermes, claude-code, openclaw, cursor`
+        );
+        process.exit(1);
+      }
+
+      let finalUrl = opts.url;
+      if (opts.mode === 'http' && (opts.identity || opts.persona || opts.tags)) {
+        const parsed = new URL(opts.url);
+        if (opts.identity) parsed.searchParams.set('agent', opts.identity);
+        if (opts.persona) parsed.searchParams.set('persona', opts.persona);
+        if (opts.tags) parsed.searchParams.set('tags', opts.tags);
+        finalUrl = parsed.toString();
+      }
+
+      const res = adapter.connectAgentColab({
+        mode: opts.mode,
+        serverUrl: finalUrl,
+        vaultPath: opts.vault ?? getDefaultVaultPath(),
+        dryRun: opts.dryRun,
+      });
+      console.log(`\n[${res.dryRun ? 'DRY RUN' : 'CONNECTED'}] ${adapter.displayName}`);
+      console.log(`  Config : ${res.configPath}`);
+      if (res.backupPath) console.log(`  Backup : ${res.backupPath}`);
+      console.log(`  Entry  : ${JSON.stringify(res.entry, null, 2)}\n`);
     }
-    const res = adapter.connectAgentColab({
-      mode: opts.mode,
-      serverUrl: opts.url,
-      vaultPath: opts.vault ?? getDefaultVaultPath(),
-      dryRun: opts.dryRun,
-    });
-    console.log(`\n[${res.dryRun ? 'DRY RUN' : 'CONNECTED'}] ${res.agent}`);
-    console.log(`  Config : ${res.configPath}`);
-    if (res.backupPath) console.log(`  Backup : ${res.backupPath}`);
-    console.log(`  Entry  : ${JSON.stringify(res.entry, null, 2)}\n`);
-  });
+  );
 
 program
   .command('export')

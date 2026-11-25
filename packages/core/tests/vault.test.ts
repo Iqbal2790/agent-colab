@@ -138,4 +138,16 @@ describe('@agent-colab/core', () => {
     expect(geminiPack).toContain('Gemini Gems');
     expect(geminiPack).toContain('Connect Hermes');
   });
+
+  it('supports multi-persona profiles for multi-profile agents and devices', () => {
+    const work = vault.upsertPersona('work', '# Work Persona\nUse strict PR reviews.');
+    expect(work.name).toBe('work');
+    vault.upsertPersona('personal', '# Personal Persona\nKeep it casual.');
+
+    expect(vault.listPersonas().map((p) => p.name)).toEqual(['personal', 'work']);
+    expect(vault.getPersona('work')?.content).toContain('strict PR reviews');
+
+    expect(vault.deletePersona('personal')).toBe(true);
+    expect(vault.listPersonas()).toHaveLength(1);
+  });
 });

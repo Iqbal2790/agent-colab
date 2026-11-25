@@ -11,6 +11,7 @@ import type {
   CodingAccessMode,
   HandoffNote,
   McpServerEntry,
+  PersonaProfile,
   ProfileDocument,
   ProjectContext,
   ProjectSummary,
@@ -82,6 +83,7 @@ export class VaultManager {
     const dirs = [
       this.vaultPath,
       path.join(this.vaultPath, 'profile'),
+      path.join(this.vaultPath, 'profile', 'personas'),
       path.join(this.vaultPath, 'projects'),
       path.join(this.vaultPath, 'skills'),
       path.join(this.vaultPath, 'configs'),
@@ -151,6 +153,14 @@ export class VaultManager {
 
   private globalRulesPath(): string {
     return path.join(this.vaultPath, 'profile', 'global-rules.md');
+  }
+
+  private personasDir(): string {
+    return path.join(this.vaultPath, 'profile', 'personas');
+  }
+
+  private personaPath(name: string): string {
+    return path.join(this.personasDir(), `${sanitizeSlug(name)}.md`);
   }
 
   private mcpRegistryPath(): string {
@@ -225,6 +235,60 @@ export class VaultManager {
       relPath: 'profile/global-rules.md',
     });
     return { content: content.trim(), updatedAt };
+  }
+
+  // --- Multi-Persona Profiles (e.g. work, personal, research) ---
+
+  listPersonas(): PersonaProfile[] {
+    const dir = this.personasDir();
+    if (!fs.existsSync(dir)) return [];
+    const personas: PersonaProfile[] = [];
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.md')) continue;
+      const name = file.replace(/\.md$/, '');
+      const persona = this.getPersona(name);
+      if (persona) personas.push(persona);
+    }
+    return personas.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  getPersona(name: string): PersonaProfile | null {
+    const safeName = sanitizeSlug(name);
+    const file = this.personaPath(safeName);
+    if (!fs.existsSync(file)) return null;
+    const parsed = matter(fs.readFileSync(file, 'utf8'));
+    const stat = fs.statSync(file);
+    return {
+      name: safeName,
+      content: parsed.content.trim(),
+      updatedAt: String(parsed.data.updatedAt ?? stat.mtime.toISOString()),
+    };
+  }
+
+  upsertPersona(name: string, content: string): PersonaProfile {
+    const safeName = sanitizeSlug(name);
+    const updatedAt = new Date().toISOString();
+    const out = matter.stringify(content.trim() + '\n', { name: safeName, updatedAt });
+    fs.mkdirSync(this.personasDir(), { recursive: true });
+    fs.writeFileSync(this.personaPath(safeName), out, 'utf8');
+    this.indexDb.upsertDocument({
+      docId: `profile:persona:${safeName}`,
+      docType: 'profile',
+      projectSlug: '',
+      title: `Persona: ${safeName}`,
+      body: content,
+      relPath: `profile/personas/${safeName}.md`,
+    });
+    return { name: safeName, content: content.trim(), updatedAt };
+  }
+
+  deletePersona(name: string): boolean {
+    const safeName = sanitizeSlug(name);
+    const file = this.personaPath(safeName);
+    if (!fs.existsSync(file)) return false;
+    fs.unlinkSync(file);
+    this.indexDb.removeDocument(`profile:persona:${safeName}`);
+    return true;
   }
 
   // --- Projects ---
@@ -769,6 +833,17 @@ export class VaultManager {
         title: 'Global Agent Rules',
         body: rules.content,
         relPath: 'profile/global-rules.md',
+      });
+    }
+
+    for (const persona of this.listPersonas()) {
+      this.indexDb.upsertDocument({
+        docId: `profile:persona:${persona.name}`,
+        docType: 'profile',
+        projectSlug: '',
+        title: `Persona: ${persona.name}`,
+        body: persona.content,
+        relPath: `profile/personas/${persona.name}.md`,
       });
     }
 

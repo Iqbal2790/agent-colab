@@ -15,6 +15,10 @@ import type {
 export interface HermesAdapterOptions {
   skillsDir?: string;
   configPath?: string;
+  /** Optional named Hermes profile (resolves to ~/.hermes/profiles/<profile>/) */
+  profile?: string;
+  /** Optional custom HERMES_HOME directory (e.g. ~/.hermes-work) */
+  hermesHome?: string;
 }
 
 interface HermesConfig {
@@ -36,14 +40,22 @@ function createBackup(filePath: string): string | undefined {
 
 export class HermesAdapter implements AgentAdapter {
   public readonly id = 'hermes' as const;
-  public readonly displayName = 'Hermes Agent';
+  public readonly displayName: string;
   private readonly skillsDir: string;
   private readonly configPath: string;
 
   constructor(options?: HermesAdapterOptions) {
     const home = os.homedir();
-    this.skillsDir = options?.skillsDir ?? path.join(home, '.hermes', 'skills');
-    this.configPath = options?.configPath ?? path.join(home, '.hermes', 'config.yaml');
+    const profileName = options?.profile?.trim();
+    const baseDir = options?.hermesHome?.trim()
+      ? path.resolve(options.hermesHome.trim())
+      : profileName
+        ? path.join(home, '.hermes', 'profiles', profileName)
+        : path.join(home, '.hermes');
+
+    this.displayName = profileName ? `Hermes Agent (${profileName})` : 'Hermes Agent';
+    this.skillsDir = options?.skillsDir ?? path.join(baseDir, 'skills');
+    this.configPath = options?.configPath ?? path.join(baseDir, 'config.yaml');
   }
 
   detect(): AdapterDetectInfo {

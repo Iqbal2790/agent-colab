@@ -7,6 +7,12 @@ export interface ProfileDocument {
   updatedAt: string;
 }
 
+export interface PersonaProfile {
+  name: string;
+  content: string;
+  updatedAt: string;
+}
+
 export interface ProjectSummary {
   slug: string;
   name: string;

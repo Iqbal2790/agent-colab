@@ -103,9 +103,21 @@ export function createApp(options: CreateAppOptions): Hono {
       readOnly = !tunnel.validateToken(token, 'read-write');
     }
 
+    const defaultAgent =
+      c.req.query('agent') || c.req.header('x-agent-identity') || undefined;
+    const persona =
+      c.req.query('persona') || c.req.header('x-agent-persona') || undefined;
+    const tagsRaw = c.req.query('tags') || c.req.header('x-agent-tags') || '';
+    const allowedTags = tagsRaw
+      ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean)
+      : undefined;
+
     const mcpServer = createMcpServer(vault, {
       readOnly,
       via: viaTunnel ? 'tunnel' : 'mcp',
+      defaultAgent,
+      persona,
+      allowedTags,
     });
 
     const transport = new StreamableHTTPServerTransport({
@@ -155,11 +167,12 @@ export function createApp(options: CreateAppOptions): Hono {
     });
   });
 
-  // Profile & Global Rules
+  // Profile, Global Rules & Multi-Persona Profiles
   app.get('/api/profile', (c) => {
     return c.json({
       profile: vault.getUserProfile(),
       rules: vault.getGlobalRules(),
+      personas: vault.listPersonas(),
     });
   });
 
@@ -171,6 +184,21 @@ export function createApp(options: CreateAppOptions): Hono {
       body.rules !== undefined ? vault.updateGlobalRules(body.rules) : vault.getGlobalRules();
     vault.logAudit({ actor: 'user', action: 'update_profile', resource: 'profile', via: 'web' });
     return c.json({ profile, rules });
+  });
+
+  app.get('/api/personas', (c) => c.json({ personas: vault.listPersonas() }));
+
+  app.put('/api/personas/:name', async (c) => {
+    const name = c.req.param('name');
+    const body = (await c.req.json()) as { content: string };
+    const persona = vault.upsertPersona(name, body.content ?? '');
+    vault.logAudit({ actor: 'user', action: 'upsert_persona', resource: `persona:${persona.name}`, via: 'web' });
+    return c.json({ persona });
+  });
+
+  app.delete('/api/personas/:name', (c) => {
+    const deleted = vault.deletePersona(c.req.param('name'));
+    return c.json({ deleted });
   });
 
   // Projects
@@ -348,8 +376,18 @@ export function createApp(options: CreateAppOptions): Hono {
       agent: AgentAdapterId;
       direction: 'import' | 'export';
       dryRun?: boolean;
+      hermesProfile?: string;
+      hermesHome?: string;
     };
-    const adapters = createAdapters(adapterOptions);
+    const mergedAdapterOptions: AdapterRegistryOptions = {
+      ...adapterOptions,
+      hermes: {
+        ...adapterOptions?.hermes,
+        ...(body.hermesProfile ? { profile: body.hermesProfile } : {}),
+        ...(body.hermesHome ? { hermesHome: body.hermesHome } : {}),
+      },
+    };
+    const adapters = createAdapters(mergedAdapterOptions);
     const adapter = adapters[body.agent];
     if (!adapter) return c.json({ error: `Unknown agent adapter: ${body.agent}` }, 400);
 
@@ -362,7 +400,7 @@ export function createApp(options: CreateAppOptions): Hono {
       vault.logAudit({
         actor: 'user',
         action: `sync_${body.direction}`,
-        resource: `adapter:${body.agent}`,
+        resource: `adapter:${body.agent}${body.hermesProfile ? `:${body.hermesProfile}` : ''}`,
         via: 'web',
         details: `${result.actions.length} item(s)`,
       });
@@ -377,8 +415,18 @@ export function createApp(options: CreateAppOptions): Hono {
       serverUrl?: string;
       dryRun?: boolean;
       force?: boolean;
+      hermesProfile?: string;
+      hermesHome?: string;
     };
-    const adapters = createAdapters(adapterOptions);
+    const mergedAdapterOptions: AdapterRegistryOptions = {
+      ...adapterOptions,
+      hermes: {
+        ...adapterOptions?.hermes,
+        ...(body.hermesProfile ? { profile: body.hermesProfile } : {}),
+        ...(body.hermesHome ? { hermesHome: body.hermesHome } : {}),
+      },
+    };
+    const adapters = createAdapters(mergedAdapterOptions);
     const adapter = adapters[body.agent];
     if (!adapter) return c.json({ error: `Unknown agent adapter: ${body.agent}` }, 400);
 

@@ -95,6 +95,12 @@ export interface TunnelStatus {
   error?: string;
 }
 
+export interface PersonaProfile {
+  name: string;
+  content: string;
+  updatedAt: string;
+}
+
 export interface SearchResult {
   id: string;
   type: 'profile' | 'project' | 'task' | 'note' | 'skill';
@@ -120,9 +126,20 @@ export const api = {
   health: () =>
     req<{ ok: boolean; version: string; vaultPath: string; tunnelActive: boolean }>('/api/health'),
   getProfile: () =>
-    req<{ profile: { content: string; updatedAt: string }; rules: { content: string; updatedAt: string } }>('/api/profile'),
+    req<{
+      profile: { content: string; updatedAt: string };
+      rules: { content: string; updatedAt: string };
+      personas: PersonaProfile[];
+    }>('/api/profile'),
   updateProfile: (payload: { content?: string; rules?: string }) =>
     req('/api/profile', { method: 'PUT', body: JSON.stringify(payload) }),
+  upsertPersona: (name: string, content: string) =>
+    req<{ persona: PersonaProfile }>(`/api/personas/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+  deletePersona: (name: string) =>
+    req<{ deleted: boolean }>(`/api/personas/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   listProjects: () => req<{ projects: ProjectSummary[] }>('/api/projects'),
   getProject: (slug: string) =>
     req<{ project: ProjectContext; tasks: TaskItem[]; notes: HandoffNote[] }>(`/api/projects/${slug}`),

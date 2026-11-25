@@ -174,4 +174,32 @@ describe('@agent-colab/adapters (sandboxed)', () => {
       true
     );
   });
+
+  it('supports Hermes multi-profile via hermesHome and named profile options', () => {
+    const workHome = path.join(tmpRoot, 'hermes-work');
+    const personalHome = path.join(tmpRoot, 'hermes-personal');
+
+    const hermesWork = new HermesAdapter({ hermesHome: workHome, profile: 'work' });
+    const hermesPersonal = new HermesAdapter({ hermesHome: personalHome, profile: 'personal' });
+
+    expect(hermesWork.displayName).toBe('Hermes Agent (work)');
+    hermesWork.connectAgentColab({
+      mode: 'http',
+      serverUrl: 'http://100.64.0.1:4242/mcp?agent=hermes:work@laptop&persona=work&tags=work',
+    });
+    hermesPersonal.connectAgentColab({
+      mode: 'http',
+      serverUrl: 'http://100.64.0.1:4242/mcp?agent=hermes:personal@laptop&persona=personal&tags=personal',
+    });
+
+    const workCfg = yaml.load(fs.readFileSync(path.join(workHome, 'config.yaml'), 'utf8')) as {
+      mcp_servers: Record<string, { url: string }>;
+    };
+    const personalCfg = yaml.load(
+      fs.readFileSync(path.join(personalHome, 'config.yaml'), 'utf8')
+    ) as { mcp_servers: Record<string, { url: string }> };
+
+    expect(workCfg.mcp_servers['agent-colab'].url).toContain('persona=work');
+    expect(personalCfg.mcp_servers['agent-colab'].url).toContain('persona=personal');
+  });
 });
