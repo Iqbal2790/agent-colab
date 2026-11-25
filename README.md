@@ -10,7 +10,8 @@ Stop re-explaining your project context every time you switch AI tools (**Antigr
 
 - **Centralized Context & Memory**: Stores user profile, global rules, project contexts, and technical decisions in Git-friendly Markdown + YAML, indexed automatically with **SQLite FTS5** (`node:sqlite`, zero native compilation).
 - **Agent-to-Agent Collaboration**: Shared task board with agent locking (`claim_task`) and structured handoff notes (`leave_handoff_note`) so agents can continue each other's work seamlessly.
-- **Skill & MCP Config Sync**: Import/export `SKILL.md` bundles and MCP configs across **Antigravity**, **Hermes Agent**, **Claude Code**, **OpenClaw**, and **Cursor** with dry-run previews, automatic secret redaction (`${ENV_VAR}`), and `.bak` config backups.
+- **1 Universal MCP Connector (Auto-Detect)**: No per-agent adapters to maintain. Point **any** MCP-compatible agent (Antigravity, Hermes Agent, Claude Code, OpenClaw, Cursor, or any future agent) to `/mcp`, and Agent Colab automatically detects and registers the connected client from its MCP handshake.
+- **Universal Skills Sync**: Import/export standard `SKILL.md` bundles between any local skills directory and the central Vault.
 - **Opt-In Workspace Coding (23 MCP Tools)**: Give connected agents — including **Gemini Web** and **Claude Chat** via Remote MCP — explicit per-project permission (`Disabled` / `Read-Only` / `Full Access`) to list, read, search, edit files, inspect `git diff`, and run commands inside your project folder (protected by hard path jail, sensitive file blocking, and audit logs).
 - **Private-First + On-Demand Tunnel**: Runs locally on `127.0.0.1` or your private network by default. Toggle a temporary Cloudflare Quick Tunnel (`read-only` or `read-write`, with auto-shutdown TTL) only when needed, or export 1-click **Context Packs** (`.md`) offline.
 
@@ -56,33 +57,24 @@ By default, `docker-compose.yml` binds to `127.0.0.1:4242` and persists your Vau
 
 ---
 
-## Connecting Your AI Tools
+## Connecting Your AI Tools (1 Universal Connector)
 
-- **Agentic Tools (Antigravity, Hermes, Claude Code, OpenClaw, Cursor)**: Open the **Skills & Sync** tab in the Web Dashboard and click **Connect MCP**, or run:
-  ```bash
-  node packages/cli/dist/index.js connect antigravity --mode http
-  node packages/cli/dist/index.js connect hermes --mode http
-  node packages/cli/dist/index.js connect claude-code --mode http
-  node packages/cli/dist/index.js connect openclaw --mode http
-  node packages/cli/dist/index.js connect cursor --mode http
-  ```
-- **Gemini Web & Claude Chat**: Open the **Web Bridge** tab → start the **On-Demand Tunnel** → copy the **Remote MCP URL** into Gemini Web (**Customize → Connectors → + Custom**) or Claude Chat (**Settings → Connectors**).
-
-### Multi-Device & Multi-Profile Hermes
-
-Connect multiple machines (e.g., home PC + laptop) or multiple Hermes profiles (`work` vs `personal`) to the same Agent Colab hub using query parameters on `/mcp` or CLI flags:
+Open the **Connector & Skills** tab in the Web Dashboard to copy your **Universal MCP URL** (JSON or YAML snippet), or print it via CLI:
 
 ```bash
-# Same agent on 2 devices (distinct locks & handoff attribution)
-node packages/cli/dist/index.js connect antigravity --mode http --url http://<vps-tailscale-ip>:4242/mcp --identity antigravity@pc-home
-node packages/cli/dist/index.js connect antigravity --mode http --url http://<vps-tailscale-ip>:4242/mcp --identity antigravity@laptop
+# Default universal MCP snippet
+node packages/cli/dist/index.js connect --url http://<your-server>:4242/mcp
 
-# Multi-profile Hermes with isolated personas & project tag scopes
-node packages/cli/dist/index.js connect hermes --profile work --url http://<vps-tailscale-ip>:4242/mcp --identity hermes:work@laptop --persona work --tags work
-node packages/cli/dist/index.js connect hermes --profile personal --url http://<vps-tailscale-ip>:4242/mcp --identity hermes:personal@laptop --persona personal --tags personal
+# Multi-device (distinct locks & handoff attribution)
+node packages/cli/dist/index.js connect --url http://<vps-tailscale-ip>:4242/mcp --identity antigravity@laptop
+
+# Multi-profile / isolated persona & project tag scope (e.g. Hermes work vs personal)
+node packages/cli/dist/index.js connect --url http://<vps-tailscale-ip>:4242/mcp --identity hermes:work@laptop --persona work --tags work
 ```
 
-You can also configure **Device Label**, **Hermes Profile**, **Persona**, and **Tag Scope** directly from the **Remote Setup** modal in the Web Dashboard.
+Any agent that connects to `/mcp` is automatically detected from its MCP `initialize` handshake and displayed in **Auto-Detected Agents** in the dashboard.
+
+- **Web AI Chats (Gemini Web & Claude Chat)**: Open the **Web Bridge** tab → start the **On-Demand Tunnel** → copy the **Remote MCP URL** into Gemini Web (**Customize → Connectors → + Custom**) or Claude Chat (**Settings → Connectors**).
 
 ---
 

@@ -58,30 +58,29 @@ export interface SkillItem {
   updatedAt: string;
 }
 
-export type AgentAdapterId = 'antigravity' | 'hermes' | 'claude-code' | 'openclaw' | 'cursor';
-
-export interface AdapterInfo {
-  agent: AgentAdapterId;
-  displayName: string;
-  installed: boolean;
-  skillsDir: string;
-  configPath: string;
+export interface ConnectedAgent {
+  id: string;
+  clientName: string;
+  clientVersion?: string;
+  persona?: string;
+  tagScope?: string;
+  via: 'mcp' | 'tunnel';
+  firstSeen: string;
+  lastSeen: string;
+  requestCount: number;
 }
 
-export interface SyncAction {
-  kind: 'skill' | 'mcp';
+export interface SkillSyncAction {
   name: string;
   operation: 'create' | 'update' | 'skip';
   targetPath: string;
-  redactedKeys?: string[];
 }
 
-export interface SyncResult {
-  agent: AgentAdapterId;
+export interface SkillSyncResult {
+  directory: string;
   direction: 'import' | 'export';
   dryRun: boolean;
-  actions: SyncAction[];
-  backupPath?: string;
+  actions: SkillSyncAction[];
 }
 
 export interface TunnelStatus {
@@ -170,14 +169,11 @@ export const api = {
     nextSteps?: string[];
   }) => req<{ note: HandoffNote }>('/api/notes', { method: 'POST', body: JSON.stringify(payload) }),
   listSkills: () => req<{ skills: SkillItem[] }>('/api/skills'),
-  listAdapters: () => req<{ adapters: AdapterInfo[] }>('/api/adapters'),
-  syncAdapter: (payload: { agent: AgentAdapterId; direction: 'import' | 'export'; dryRun?: boolean }) =>
-    req<SyncResult>('/api/sync', { method: 'POST', body: JSON.stringify(payload) }),
-  connectAdapter: (payload: { agent: AgentAdapterId; mode: 'http' | 'stdio'; dryRun?: boolean }) =>
-    req<{ agent: string; configPath: string; backupPath?: string; dryRun: boolean; entry: unknown }>('/api/connect', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  listConnectedAgents: () => req<{ agents: ConnectedAgent[] }>('/api/agents'),
+  removeConnectedAgent: (id: string) =>
+    req<{ deleted: boolean }>(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  syncSkillsDir: (payload: { dir: string; direction: 'import' | 'export'; dryRun?: boolean }) =>
+    req<SkillSyncResult>('/api/skills/sync-dir', { method: 'POST', body: JSON.stringify(payload) }),
   getTunnel: () => req<TunnelStatus>('/api/tunnel'),
   startTunnel: (payload: { ttlMinutes: number; scope: 'read-only' | 'read-write'; provider?: 'cloudflared' | 'mock' }) =>
     req<TunnelStatus>('/api/tunnel/start', { method: 'POST', body: JSON.stringify(payload) }),

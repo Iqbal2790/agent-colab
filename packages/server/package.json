@@ -15,7 +15,6 @@
     "dev": "tsx watch src/bin.ts"
   },
   "dependencies": {
-    "@agent-colab/adapters": "*",
     "@agent-colab/core": "*",
     "@agent-colab/tunnel": "*",
     "@hono/node-server": "^1.14.1",

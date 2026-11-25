@@ -103,6 +103,18 @@ export interface AuditEntry {
   details?: string;
 }
 
+export interface ConnectedAgent {
+  id: string;
+  clientName: string;
+  clientVersion?: string;
+  persona?: string;
+  tagScope?: string;
+  via: 'mcp' | 'tunnel';
+  firstSeen: string;
+  lastSeen: string;
+  requestCount: number;
+}
+
 export interface ContextPackOptions {
   projectSlug?: string;
   target: 'claude' | 'gemini' | 'generic';

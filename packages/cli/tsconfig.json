@@ -6,7 +6,6 @@
   },
   "references": [
     { "path": "../core" },
-    { "path": "../adapters" },
     { "path": "../tunnel" },
     { "path": "../server" }
   ],

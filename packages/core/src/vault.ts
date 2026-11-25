@@ -9,6 +9,7 @@ import { redactEnvRecord } from './redact.js';
 import type {
   AuditEntry,
   CodingAccessMode,
+  ConnectedAgent,
   HandoffNote,
   McpServerEntry,
   PersonaProfile,
@@ -908,5 +909,24 @@ export class VaultManager {
 
   getAuditLogs(limit = 50): AuditEntry[] {
     return this.indexDb.getAuditLogs(limit);
+  }
+
+  recordConnectedAgent(input: {
+    id: string;
+    clientName: string;
+    clientVersion?: string;
+    persona?: string;
+    tagScope?: string;
+    via: 'mcp' | 'tunnel';
+  }): ConnectedAgent {
+    return this.indexDb.recordConnectedAgent(input);
+  }
+
+  listConnectedAgents(): ConnectedAgent[] {
+    return this.indexDb.listConnectedAgents();
+  }
+
+  removeConnectedAgent(id: string): boolean {
+    return this.indexDb.removeConnectedAgent(id);
   }
 }

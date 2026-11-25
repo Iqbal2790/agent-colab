@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AuditEntry, SearchResult } from './types.js';
+import type { AuditEntry, ConnectedAgent, SearchResult } from './types.js';
 
 export interface IndexedDoc {
   docId: string;
@@ -36,6 +36,17 @@ export class VaultIndexDb {
         resource TEXT NOT NULL,
         via TEXT NOT NULL,
         details TEXT
+      );
+      CREATE TABLE IF NOT EXISTS connected_agents (
+        id TEXT PRIMARY KEY,
+        client_name TEXT NOT NULL,
+        client_version TEXT,
+        persona TEXT,
+        tag_scope TEXT,
+        via TEXT NOT NULL,
+        first_seen TEXT NOT NULL,
+        last_seen TEXT NOT NULL,
+        request_count INTEGER NOT NULL DEFAULT 1
       );
     `);
   }
@@ -148,6 +159,117 @@ export class VaultIndexDb {
       via: r.via,
       details: r.details ?? undefined,
     }));
+  }
+
+  recordConnectedAgent(input: {
+    id: string;
+    clientName: string;
+    clientVersion?: string;
+    persona?: string;
+    tagScope?: string;
+    via: 'mcp' | 'tunnel';
+  }): ConnectedAgent {
+    const now = new Date().toISOString();
+    const existing = this.db
+      .prepare('SELECT id, first_seen, request_count FROM connected_agents WHERE id = ?')
+      .get(input.id) as { id: string; first_seen: string; request_count: number } | undefined;
+
+    if (existing) {
+      const nextCount = existing.request_count + 1;
+      this.db
+        .prepare(
+          `UPDATE connected_agents
+           SET client_name = ?, client_version = COALESCE(?, client_version),
+               persona = COALESCE(?, persona), tag_scope = COALESCE(?, tag_scope),
+               via = ?, last_seen = ?, request_count = ?
+           WHERE id = ?`
+        )
+        .run(
+          input.clientName,
+          input.clientVersion ?? null,
+          input.persona ?? null,
+          input.tagScope ?? null,
+          input.via,
+          now,
+          nextCount,
+          input.id
+        );
+      return {
+        id: input.id,
+        clientName: input.clientName,
+        clientVersion: input.clientVersion,
+        persona: input.persona,
+        tagScope: input.tagScope,
+        via: input.via,
+        firstSeen: existing.first_seen,
+        lastSeen: now,
+        requestCount: nextCount,
+      };
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO connected_agents (id, client_name, client_version, persona, tag_scope, via, first_seen, last_seen, request_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+      )
+      .run(
+        input.id,
+        input.clientName,
+        input.clientVersion ?? null,
+        input.persona ?? null,
+        input.tagScope ?? null,
+        input.via,
+        now,
+        now
+      );
+
+    return {
+      id: input.id,
+      clientName: input.clientName,
+      clientVersion: input.clientVersion,
+      persona: input.persona,
+      tagScope: input.tagScope,
+      via: input.via,
+      firstSeen: now,
+      lastSeen: now,
+      requestCount: 1,
+    };
+  }
+
+  listConnectedAgents(): ConnectedAgent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, client_name, client_version, persona, tag_scope, via, first_seen, last_seen, request_count
+         FROM connected_agents ORDER BY last_seen DESC`
+      )
+      .all() as Array<{
+      id: string;
+      client_name: string;
+      client_version: string | null;
+      persona: string | null;
+      tag_scope: string | null;
+      via: 'mcp' | 'tunnel';
+      first_seen: string;
+      last_seen: string;
+      request_count: number;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      clientName: r.client_name,
+      clientVersion: r.client_version ?? undefined,
+      persona: r.persona ?? undefined,
+      tagScope: r.tag_scope ?? undefined,
+      via: r.via,
+      firstSeen: r.first_seen,
+      lastSeen: r.last_seen,
+      requestCount: r.request_count,
+    }));
+  }
+
+  removeConnectedAgent(id: string): boolean {
+    const res = this.db.prepare('DELETE FROM connected_agents WHERE id = ?').run(id);
+    return Number(res.changes) > 0;
   }
 
   close(): void {

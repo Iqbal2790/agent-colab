@@ -10,7 +10,6 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@agent-colab/adapters": "*",
     "@agent-colab/core": "*",
     "@agent-colab/server": "*",
     "@agent-colab/tunnel": "*",

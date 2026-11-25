@@ -23,16 +23,15 @@ import {
 } from 'lucide-react';
 import {
   api,
-  type AdapterInfo,
-  type AgentAdapterId,
   type CodingAccessMode,
+  type ConnectedAgent,
   type HandoffNote,
   type PersonaProfile,
   type ProjectContext,
   type ProjectSummary,
   type SearchResult,
   type SkillItem,
-  type SyncResult,
+  type SkillSyncResult,
   type TaskItem,
   type TunnelStatus,
 } from './api';
@@ -43,14 +42,14 @@ export default function App() {
   const [view, setView] = useState<ViewId>('dashboard');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newProjectModal, setNewProjectModal] = useState(false);
-  const [remoteSetupAgent, setRemoteSetupAgent] = useState<AdapterInfo | null>(null);
-  const [remoteServerUrl, setRemoteServerUrl] = useState(() =>
+  const [connectorUrl, setConnectorUrl] = useState(() =>
     typeof window !== 'undefined' ? `${window.location.origin}/mcp` : 'http://127.0.0.1:4242/mcp'
   );
-  const [remoteDeviceName, setRemoteDeviceName] = useState('');
-  const [remoteHermesProfile, setRemoteHermesProfile] = useState('');
-  const [remotePersona, setRemotePersona] = useState('');
-  const [remoteTags, setRemoteTags] = useState('');
+  const [connectorIdentity, setConnectorIdentity] = useState('');
+  const [connectorPersona, setConnectorPersona] = useState('');
+  const [connectorTags, setConnectorTags] = useState('');
+  const [snippetFormat, setSnippetFormat] = useState<'json' | 'yaml'>('json');
+  const [skillsSyncDir, setSkillsSyncDir] = useState('');
 
   const [vaultPath, setVaultPath] = useState('');
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -66,7 +65,7 @@ export default function App() {
   const [newPersonaName, setNewPersonaName] = useState('');
   const [newPersonaContent, setNewPersonaContent] = useState('');
   const [skills, setSkills] = useState<SkillItem[]>([]);
-  const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [connectedAgents, setConnectedAgents] = useState<ConnectedAgent[]>([]);
   const [tunnel, setTunnel] = useState<TunnelStatus>({ active: false, provider: 'cloudflared' });
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -94,7 +93,7 @@ export default function App() {
   const [newNoteNext, setNewNoteNext] = useState('');
 
   // Sync & Bridge
-  const [syncPreview, setSyncPreview] = useState<SyncResult | null>(null);
+  const [syncPreview, setSyncPreview] = useState<SkillSyncResult | null>(null);
   const [tunnelTtl, setTunnelTtl] = useState(30);
   const [tunnelScope, setTunnelScope] = useState<'read-only' | 'read-write'>('read-only');
   const [tunnelBusy, setTunnelBusy] = useState(false);
@@ -114,14 +113,14 @@ export default function App() {
 
   async function loadAll() {
     try {
-      const [h, prof, projList, tasksRes, notesRes, sk, ad, tun] = await Promise.all([
+      const [h, prof, projList, tasksRes, notesRes, sk, agentsRes, tun] = await Promise.all([
         api.health(),
         api.getProfile(),
         api.listProjects(),
         api.listTasks(),
         api.listNotes(),
         api.listSkills(),
-        api.listAdapters(),
+        api.listConnectedAgents(),
         api.getTunnel(),
       ]);
       setVaultPath(h.vaultPath);
@@ -132,7 +131,7 @@ export default function App() {
       setAllTasks(tasksRes.tasks);
       setAllNotes(notesRes.notes);
       setSkills(sk.skills);
-      setAdapters(ad.adapters);
+      setConnectedAgents(agentsRes.agents);
       setTunnel(tun);
 
       if (projList.projects.length > 0 && !selectedSlug) {
@@ -330,29 +329,30 @@ export default function App() {
     }
   }
 
-  async function handleSync(
-    agent: AgentAdapterId,
-    direction: 'import' | 'export',
-    dryRun: boolean
-  ) {
+  async function handleSyncDir(direction: 'import' | 'export', dryRun: boolean) {
+    if (!skillsSyncDir.trim()) {
+      fail('Enter a local skills directory path first (e.g. ~/.gemini/config/skills).');
+      return;
+    }
     try {
-      const res = await api.syncAdapter({ agent, direction, dryRun });
+      const res = await api.syncSkillsDir({ dir: skillsSyncDir.trim(), direction, dryRun });
       setSyncPreview(res);
       if (!dryRun) {
         await loadAll();
-        flash(`${agent} ${direction} completed (${res.actions.length} item(s)).`);
+        flash(`Skills ${direction} completed (${res.actions.length} item(s)).`);
       } else {
-        flash(`Dry-run preview ready for ${agent} (${direction}).`);
+        flash(`Dry-run preview ready (${res.actions.length} skill(s)).`);
       }
     } catch (err) {
       fail(err);
     }
   }
 
-  async function handleConnect(agent: AgentAdapterId) {
+  async function handleRemoveAgent(id: string) {
     try {
-      const res = await api.connectAdapter({ agent, mode: 'http', dryRun: false });
-      flash(`Connected Agent Colab MCP in ${res.configPath}`);
+      await api.removeConnectedAgent(id);
+      await loadAll();
+      flash(`Removed "${id}" from connected agents list.`);
     } catch (err) {
       fail(err);
     }
@@ -402,9 +402,25 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  const agyAdapter = adapters.find((a) => a.agent === 'antigravity');
-  const hermesAdapter = adapters.find((a) => a.agent === 'hermes');
   const activeTasksCount = allTasks.filter((t) => t.status !== 'done').length;
+
+  const universalMcpUrl = (() => {
+    const base = connectorUrl.trim() || 'http://127.0.0.1:4242/mcp';
+    try {
+      const u = new URL(base);
+      if (connectorIdentity.trim()) u.searchParams.set('agent', connectorIdentity.trim());
+      if (connectorPersona.trim()) u.searchParams.set('persona', connectorPersona.trim());
+      if (connectorTags.trim()) u.searchParams.set('tags', connectorTags.trim());
+      return u.toString();
+    } catch {
+      return base;
+    }
+  })();
+
+  const universalSnippet =
+    snippetFormat === 'yaml'
+      ? `mcp_servers:\n  agent-colab:\n    url: "${universalMcpUrl}"`
+      : JSON.stringify({ mcpServers: { 'agent-colab': { url: universalMcpUrl } } }, null, 2);
 
   const shareUrl =
     tunnel.active && tunnel.publicUrl && tunnel.token
@@ -417,92 +433,6 @@ export default function App() {
     tunnel.active && tunnel.publicUrl && tunnel.token
       ? `${tunnel.publicUrl}/mcp?token=${tunnel.token}`
       : '';
-
-  function buildRemoteSetup(agent: AgentAdapterId, serverUrl: string) {
-    const baseUrl = serverUrl.trim() || 'http://127.0.0.1:4242/mcp';
-    const hermesProf = agent === 'hermes' ? remoteHermesProfile.trim() : '';
-    const deviceLabel = remoteDeviceName.trim();
-    const personaLabel = remotePersona.trim();
-    const tagsLabel = remoteTags.trim();
-
-    const identityBase = hermesProf ? `${agent}:${hermesProf}` : agent;
-    const identity = deviceLabel ? `${identityBase}@${deviceLabel}` : hermesProf ? identityBase : '';
-
-    let finalUrl = baseUrl;
-    try {
-      const u = new URL(baseUrl);
-      if (identity) u.searchParams.set('agent', identity);
-      if (personaLabel) u.searchParams.set('persona', personaLabel);
-      if (tagsLabel) u.searchParams.set('tags', tagsLabel);
-      finalUrl = u.toString();
-    } catch {
-      finalUrl = baseUrl;
-    }
-
-    const cliParts = [`npx @agent-colab/cli connect ${agent} --mode http --url "${baseUrl}"`];
-    if (identity) cliParts.push(`--identity "${identity}"`);
-    if (personaLabel) cliParts.push(`--persona "${personaLabel}"`);
-    if (tagsLabel) cliParts.push(`--tags "${tagsLabel}"`);
-    if (hermesProf) cliParts.push(`--profile "${hermesProf}"`);
-    const cliCommand = cliParts.join(' ');
-
-    if (agent === 'hermes') {
-      return {
-        targetFile: hermesProf
-          ? `~/.hermes/profiles/${hermesProf}/config.yaml`
-          : '~/.hermes/config.yaml',
-        format: 'YAML',
-        cliCommand,
-        snippet: `mcp_servers:\n  agent-colab:\n    url: "${finalUrl}"`,
-      };
-    }
-    if (agent === 'openclaw') {
-      return {
-        targetFile: '~/.openclaw/openclaw.json',
-        format: 'JSON',
-        cliCommand,
-        snippet: JSON.stringify(
-          { mcp: { servers: { 'agent-colab': { url: finalUrl } } } },
-          null,
-          2
-        ),
-      };
-    }
-    if (agent === 'claude-code') {
-      return {
-        targetFile: '~/.claude.json',
-        format: 'JSON',
-        cliCommand,
-        snippet: JSON.stringify(
-          { mcpServers: { 'agent-colab': { type: 'http', url: finalUrl } } },
-          null,
-          2
-        ),
-      };
-    }
-    if (agent === 'cursor') {
-      return {
-        targetFile: '~/.cursor/mcp.json',
-        format: 'JSON',
-        cliCommand,
-        snippet: JSON.stringify(
-          { mcpServers: { 'agent-colab': { url: finalUrl } } },
-          null,
-          2
-        ),
-      };
-    }
-    return {
-      targetFile: '~/.gemini/config/mcp_config.json',
-      format: 'JSON',
-      cliCommand,
-      snippet: JSON.stringify(
-        { mcpServers: { 'agent-colab': { url: finalUrl } } },
-        null,
-        2
-      ),
-    };
-  }
 
   function openView(next: ViewId) {
     setView(next);
@@ -590,7 +520,7 @@ export default function App() {
                 [
                   ['dashboard', 'Overview & Context', Home, `${projects.length}`],
                   ['collab', 'Collaboration & Handoffs', MessageSquare, `${allNotes.length}`],
-                  ['sync', 'Skills & Config Sync', Layers, `${skills.length}`],
+                  ['sync', 'Universal Connector', Layers, `${connectedAgents.length}`],
                   ['bridge', 'Web Bridge & Tunnel', Globe, tunnel.active ? 'ON' : 'OFF'],
                   ['search', 'Vault Search (FTS5)', Search, '/'],
                   ['profile', 'User Profile & Rules', Settings, 'Vault'],
@@ -680,7 +610,7 @@ export default function App() {
               [
                 ['dashboard', 'Dashboard', Home],
                 ['collab', 'Collaboration', MessageSquare],
-                ['sync', 'Skills & Sync', Layers],
+                ['sync', 'Connector & Skills', Layers],
                 ['bridge', 'Web Bridge', Globe],
               ] as const
             ).map(([id, label, Icon]) => {
@@ -1026,7 +956,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* 2 Agent Adapter Mini-Cards */}
+                    {/* 2 Universal Connector Mini-Cards */}
                     <div className="grid grid-cols-2 gap-4">
                       <button
                         type="button"
@@ -1034,18 +964,14 @@ export default function App() {
                         className="bg-[#EFECE7] hover:bg-[#E8E5DF] rounded-[24px] p-4 text-left saas-transition"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-slate-600">Antigravity</span>
-                          <span
-                            className={`w-2.5 h-2.5 rounded-full ${
-                              agyAdapter?.installed ? 'bg-[#10B981]' : 'bg-slate-300'
-                            }`}
-                          />
+                          <span className="text-xs font-semibold text-slate-600">
+                            Universal MCP
+                          </span>
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
                         </div>
-                        <p className="mt-3 text-lg font-bold text-slate-900">
-                          {agyAdapter?.installed ? 'Detected' : 'Not Found'}
-                        </p>
+                        <p className="mt-3 text-lg font-bold text-slate-900">1 Endpoint</p>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          Sync skills & MCP →
+                          Auto-detects any agent →
                         </p>
                       </button>
 
@@ -1055,18 +981,20 @@ export default function App() {
                         className="bg-[#EFECE7] hover:bg-[#E8E5DF] rounded-[24px] p-4 text-left saas-transition"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-slate-600">Hermes Agent</span>
+                          <span className="text-xs font-semibold text-slate-600">
+                            Connected Agents
+                          </span>
                           <span
                             className={`w-2.5 h-2.5 rounded-full ${
-                              hermesAdapter?.installed ? 'bg-[#10B981]' : 'bg-amber-400'
+                              connectedAgents.length > 0 ? 'bg-[#4F46E5]' : 'bg-slate-300'
                             }`}
                           />
                         </div>
                         <p className="mt-3 text-lg font-bold text-slate-900">
-                          {hermesAdapter?.installed ? 'Detected' : 'Ready'}
+                          {connectedAgents.length} Detected
                         </p>
                         <p className="text-[11px] text-slate-500 mt-0.5">
-                          Export config.yaml →
+                          View live registry →
                         </p>
                       </button>
                     </div>
@@ -1461,151 +1389,301 @@ export default function App() {
             )}
 
             {/* ============================================================= */}
-            {/* VIEW 3: SKILLS & CONFIG SYNC (ANTIGRAVITY / HERMES)           */}
+            {/* VIEW 3: UNIVERSAL MCP CONNECTOR & SKILLS SYNC                 */}
             {/* ============================================================= */}
             {view === 'sync' && (
               <div className="space-y-5">
                 <div>
                   <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                    Skills & Config Sync
+                    Universal MCP Connector & Skills
                   </h1>
                   <p className="text-xs text-slate-500">
-                    Copy skills and MCP configs between Antigravity, Hermes, Claude Code, OpenClaw,
-                    Cursor, and your central Vault with automatic secret redaction and backups.
+                    One universal MCP endpoint for every AI agent (Antigravity, Hermes, Claude
+                    Code, OpenClaw, Cursor, or any future MCP client). Connected clients are
+                    auto-detected automatically.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  {adapters.map((a) => (
-                    <div key={a.agent} className="bg-[#EFECE7] rounded-[26px] p-5">
-                      <div className="bg-white rounded-[20px] p-5 shadow-sm">
-                        <div className="flex items-center justify-between">
-                          <h2 className="text-base font-bold text-slate-900">{a.displayName}</h2>
-                          <span
-                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                              a.installed
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : 'bg-slate-100 text-slate-500'
-                            }`}
-                          >
-                            {a.installed ? 'Detected' : 'Not detected'}
-                          </span>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                  {/* Left: 1 Universal MCP Connector */}
+                  <div className="lg:col-span-7 bg-[#EFECE7] rounded-[26px] p-5 space-y-4">
+                    <div className="bg-white rounded-[20px] p-5 shadow-sm space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h2 className="text-base font-bold text-slate-900">
+                            Universal MCP Endpoint
+                          </h2>
+                          <p className="text-xs text-slate-500">
+                            Paste into any MCP-compatible agent. No per-agent adapter required.
+                          </p>
                         </div>
-                        <div className="mt-3 space-y-1 text-[11px] font-mono text-slate-500 break-all">
-                          <p>Skills: {a.skillsDir}</p>
-                          <p>Config: {a.configPath}</p>
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          {a.installed ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => void handleSync(a.agent, 'import', true)}
-                                className="rounded-full bg-[#EFECE7] hover:bg-slate-200 text-slate-700 px-3.5 py-2 text-xs font-semibold saas-transition"
-                              >
-                                Preview Import
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleSync(a.agent, 'import', false)}
-                                className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 saas-transition"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                                Import
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleSync(a.agent, 'export', false)}
-                                className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5 saas-transition"
-                              >
-                                <Upload className="w-3.5 h-3.5" />
-                                Export
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleConnect(a.agent)}
-                                className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow saas-transition"
-                              >
-                                Connect Local MCP
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setRemoteSetupAgent(a)}
-                                className="rounded-full bg-[#F7F6F3] hover:bg-[#EFECE7] text-slate-600 px-3.5 py-2 text-xs font-semibold saas-transition"
-                              >
-                                Remote Snippet
-                              </button>
-                            </>
-                          ) : (
-                            <div className="w-full space-y-2.5">
-                              <p className="text-[11px] text-slate-500">
-                                Not installed on this host machine. Connect from your laptop/PC over
-                                private network (LAN / Tailscale / WireGuard):
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => setRemoteSetupAgent(a)}
-                                className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow saas-transition"
-                              >
-                                Remote Setup (Copy Config / CLI)
-                              </button>
-                            </div>
-                          )}
+                        <div className="inline-flex rounded-full bg-[#EFECE7] p-1">
+                          {(['json', 'yaml'] as const).map((fmt) => (
+                            <button
+                              key={fmt}
+                              type="button"
+                              onClick={() => setSnippetFormat(fmt)}
+                              className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase saas-transition ${
+                                snippetFormat === fmt
+                                  ? 'bg-slate-900 text-white'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              {fmt}
+                            </button>
+                          ))}
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
 
-                {syncPreview && (
-                  <div className="bg-[#EFECE7] rounded-[26px] p-5">
-                    <div className="bg-white rounded-[20px] p-4 shadow-sm">
-                      <h3 className="text-sm font-bold text-slate-900">
-                        Sync Report: {syncPreview.agent} ({syncPreview.direction})
-                        {syncPreview.dryRun ? ' — Dry Run' : ' — Applied'}
-                      </h3>
-                      {syncPreview.backupPath && (
-                        <p className="text-[11px] font-mono text-slate-500 mt-1">
-                          Backup: {syncPreview.backupPath}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                            Server MCP URL (auto-follows VPS / Tailscale / LAN origin)
+                          </label>
+                          <input
+                            type="text"
+                            value={connectorUrl}
+                            onChange={(e) => setConnectorUrl(e.target.value)}
+                            className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 font-mono text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                            Device / Profile Label (optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={connectorIdentity}
+                            onChange={(e) => setConnectorIdentity(e.target.value)}
+                            placeholder="e.g. antigravity@laptop or hermes:work"
+                            className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                            Tag Scope Filter (optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={connectorTags}
+                            onChange={(e) => setConnectorTags(e.target.value)}
+                            placeholder="e.g. work, backend"
+                            className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                            Persona Profile (optional)
+                          </label>
+                          <select
+                            value={connectorPersona}
+                            onChange={(e) => setConnectorPersona(e.target.value)}
+                            className="w-full rounded-xl bg-[#F7F6F3] px-3 py-2 text-xs text-slate-900 focus:outline-none"
+                          >
+                            <option value="">None (global profile only)</option>
+                            {personas.map((per) => (
+                              <option key={per.name} value={per.name}>
+                                {per.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Copyable Final URL */}
+                      <div className="rounded-xl bg-[#1E1B4B] text-white p-3.5 flex items-center justify-between gap-2">
+                        <code className="break-all font-mono text-[11px] text-emerald-300">
+                          {universalMcpUrl}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => copyText('universal-url', universalMcpUrl)}
+                          className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 px-3 py-1.5 text-[11px] font-semibold flex items-center gap-1"
+                        >
+                          {copiedKey === 'universal-url' ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-300" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                          {copiedKey === 'universal-url' ? 'Copied' : 'Copy URL'}
+                        </button>
+                      </div>
+
+                      {/* Copyable JSON / YAML Snippet */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-slate-500">
+                            Universal {snippetFormat.toUpperCase()} Config Snippet
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => copyText('universal-snippet', universalSnippet)}
+                            className="rounded-full bg-[#EFECE7] hover:bg-[#4F46E5] hover:text-white text-slate-700 px-3 py-1 text-[11px] font-semibold flex items-center gap-1 saas-transition"
+                          >
+                            {copiedKey === 'universal-snippet' ? (
+                              <Check className="w-3 h-3" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                            {copiedKey === 'universal-snippet' ? 'Copied' : 'Copy Snippet'}
+                          </button>
+                        </div>
+                        <pre className="rounded-xl bg-[#F7F6F3] p-3 font-mono text-[11px] text-slate-800 overflow-x-auto">
+                          {universalSnippet}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Auto-Detected Connected Agents Registry */}
+                  <div className="lg:col-span-5 bg-[#EFECE7] rounded-[26px] p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-[15px] font-bold text-slate-900">
+                          Auto-Detected Agents ({connectedAgents.length})
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Automatically discovered from MCP client handshake.
                         </p>
-                      )}
-                      {syncPreview.actions.length === 0 ? (
-                        <p className="text-xs text-slate-500 mt-2">No changes detected.</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-[20px] p-4 shadow-sm">
+                      {connectedAgents.length === 0 ? (
+                        <div className="py-8 text-center">
+                          <p className="text-xs font-semibold text-slate-700">
+                            Waiting for first agent connection
+                          </p>
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            Paste the Universal MCP URL into any agent. As soon as it connects, it
+                            appears here automatically.
+                          </p>
+                        </div>
                       ) : (
-                        <ul className="mt-3 divide-y divide-slate-100 text-xs">
-                          {syncPreview.actions.map((act, i) => (
-                            <li key={i} className="py-2 flex items-center justify-between gap-2">
-                              <span>
-                                <span className="font-mono font-bold text-[#4F46E5]">
-                                  [{act.operation.toUpperCase()}]
-                                </span>{' '}
-                                {act.kind}: <strong>{act.name}</strong>
-                              </span>
-                              {act.redactedKeys && act.redactedKeys.length > 0 && (
-                                <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full text-[11px]">
-                                  Redacted: {act.redactedKeys.join(', ')}
-                                </span>
-                              )}
+                        <ul className="divide-y divide-slate-100">
+                          {connectedAgents.map((ag) => (
+                            <li key={ag.id} className="py-3 flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-bold text-slate-900 break-all">
+                                    {ag.id}
+                                  </span>
+                                  {ag.clientVersion && (
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                      v{ag.clientVersion}
+                                    </span>
+                                  )}
+                                  <span className="rounded-full bg-emerald-50 text-emerald-700 px-2 py-0.5 text-[10px] font-semibold">
+                                    {ag.via}
+                                  </span>
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-slate-500">
+                                  <span>{ag.requestCount} reqs</span>
+                                  {ag.persona && (
+                                    <span className="rounded-full bg-indigo-50 text-[#4F46E5] px-2 py-0.5 font-semibold">
+                                      persona:{ag.persona}
+                                    </span>
+                                  )}
+                                  {ag.tagScope && (
+                                    <span className="rounded-full bg-amber-50 text-amber-700 px-2 py-0.5 font-semibold">
+                                      tags:{ag.tagScope}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                  Last seen: {new Date(ag.lastSeen).toLocaleString()}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveAgent(ag.id)}
+                                className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                                title="Remove from registry"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
                             </li>
                           ))}
                         </ul>
                       )}
                     </div>
                   </div>
-                )}
+                </div>
 
-                <div className="bg-[#EFECE7] rounded-[26px] p-5">
-                  <h2 className="text-[15px] font-bold text-slate-900 mb-3">
-                    Skills in Vault ({skills.length})
-                  </h2>
-                  <div className="bg-white rounded-[20px] p-4 shadow-sm">
+                {/* Generic Local Skills Folder Sync (works with ANY agent) */}
+                <div className="bg-[#EFECE7] rounded-[26px] p-5 space-y-4">
+                  <div>
+                    <h2 className="text-[15px] font-bold text-slate-900">
+                      Universal Skills Sync & Vault Library ({skills.length})
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Import or export standard <code>SKILL.md</code> folders from any local agent
+                      skills directory.
+                    </p>
+                  </div>
+
+                  <div className="bg-white rounded-[20px] p-4 shadow-sm space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        type="text"
+                        value={skillsSyncDir}
+                        onChange={(e) => setSkillsSyncDir(e.target.value)}
+                        placeholder="Local skills directory, e.g. ~/.gemini/config/skills or ~/.hermes/skills"
+                        className="min-w-0 flex-1 rounded-full bg-[#F7F6F3] px-4 py-2 font-mono text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleSyncDir('import', true)}
+                        className="rounded-full bg-[#EFECE7] hover:bg-slate-200 text-slate-700 px-3.5 py-2 text-xs font-semibold"
+                      >
+                        Preview
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleSyncDir('import', false)}
+                        className="rounded-full bg-white border border-slate-200 hover:border-[#4F46E5] text-slate-700 px-3.5 py-2 text-xs font-semibold flex items-center gap-1.5"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Import
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleSyncDir('export', false)}
+                        className="rounded-full bg-[#4F46E5] hover:bg-[#4338CA] text-white px-4 py-2 text-xs font-semibold shadow-indigo-glow flex items-center gap-1.5"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Export
+                      </button>
+                    </div>
+
+                    {syncPreview && (
+                      <div className="rounded-xl bg-[#F7F6F3] p-3 text-xs">
+                        <p className="font-bold text-slate-800">
+                          {syncPreview.dryRun ? 'Dry Run' : 'Applied'}: {syncPreview.direction} (
+                          {syncPreview.actions.length} skill(s))
+                        </p>
+                        {syncPreview.actions.length > 0 && (
+                          <ul className="mt-1.5 space-y-1">
+                            {syncPreview.actions.map((act, i) => (
+                              <li key={i} className="font-mono text-[11px] text-slate-600">
+                                <span className="text-[#4F46E5] font-bold">
+                                  [{act.operation.toUpperCase()}]
+                                </span>{' '}
+                                {act.name}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+
                     {skills.length === 0 ? (
-                      <p className="text-xs text-slate-500">
-                        No skills stored in the Vault yet. Use Import on Antigravity or Hermes above
-                        to centralize your skills.
+                      <p className="text-xs text-slate-500 pt-2">
+                        No skills stored in the Vault yet. Enter any local skills path above and
+                        click Import.
                       </p>
                     ) : (
-                      <ul className="divide-y divide-slate-100">
+                      <ul className="divide-y divide-slate-100 pt-2">
                         {skills.map((s) => (
                           <li key={s.name} className="py-2.5 flex items-center justify-between">
                             <div>
@@ -2202,178 +2280,6 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {/* REMOTE SETUP MODAL (For connecting laptop/PC agents to VPS / VM / Home Server) */}
-        {remoteSetupAgent && (() => {
-          const setup = buildRemoteSetup(remoteSetupAgent.agent, remoteServerUrl);
-          return (
-            <div
-              onClick={() => setRemoteSetupAgent(null)}
-              className="fixed inset-0 bg-slate-950/40 backdrop-blur-[2px] z-50 flex items-center justify-center p-4"
-            >
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className="w-full max-w-lg max-h-[calc(100dvh-2rem)] bg-[#F7F6F3] rounded-[28px] shadow-2xl border border-white flex flex-col overflow-hidden"
-              >
-                <div className="px-6 py-4 border-b border-slate-200/70 flex items-center justify-between shrink-0">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900">
-                      Remote Setup — {remoteSetupAgent.displayName}
-                    </h2>
-                    <p className="text-[11px] text-slate-500">
-                      Connect {remoteSetupAgent.displayName} on your local machine to this Agent
-                      Colab server.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setRemoteSetupAgent(null)}
-                    className="w-8 h-8 rounded-full bg-[#EFECE7] hover:bg-white flex items-center justify-center text-slate-600"
-                    aria-label="Close remote setup modal"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="p-6 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Agent Colab MCP URL (use your VPS / Tailscale / LAN IP if remote)
-                    </label>
-                    <input
-                      type="text"
-                      value={remoteServerUrl}
-                      onChange={(e) => setRemoteServerUrl(e.target.value)}
-                      className="w-full rounded-xl bg-white px-3.5 py-2.5 font-mono text-xs text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/30"
-                    />
-                  </div>
-
-                  {/* Multi-Device & Multi-Profile Identity Options */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Device Label (multi-device)
-                      </label>
-                      <input
-                        type="text"
-                        value={remoteDeviceName}
-                        onChange={(e) => setRemoteDeviceName(e.target.value)}
-                        placeholder="e.g. laptop, pc-home"
-                        className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
-                      />
-                    </div>
-
-                    {remoteSetupAgent.agent === 'hermes' && (
-                      <div>
-                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                          Hermes Profile Name (optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={remoteHermesProfile}
-                          onChange={(e) => setRemoteHermesProfile(e.target.value)}
-                          placeholder="e.g. work, personal"
-                          className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
-                        />
-                      </div>
-                    )}
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Persona Profile (optional)
-                      </label>
-                      <select
-                        value={remotePersona}
-                        onChange={(e) => setRemotePersona(e.target.value)}
-                        className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
-                      >
-                        <option value="">None (global profile only)</option>
-                        {personas.map((p) => (
-                          <option key={p.name} value={p.name}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Tag Scope Filter (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={remoteTags}
-                        onChange={(e) => setRemoteTags(e.target.value)}
-                        placeholder="e.g. work (isolates projects)"
-                        className="w-full rounded-xl bg-white px-3 py-2 text-xs text-slate-900 shadow-sm focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Option 1: 1-line CLI */}
-                  <div className="bg-[#EFECE7] rounded-[20px] p-4 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-800">
-                        Option 1: Run 1-Line CLI on Your Local Machine
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => copyText('remote-cli', setup.cliCommand)}
-                        className="rounded-full bg-white hover:bg-[#4F46E5] hover:text-white text-slate-700 px-3 py-1 text-[11px] font-semibold flex items-center gap-1 shadow-sm saas-transition"
-                      >
-                        {copiedKey === 'remote-cli' ? (
-                          <Check className="w-3 h-3" />
-                        ) : (
-                          <Copy className="w-3 h-3" />
-                        )}
-                        {copiedKey === 'remote-cli' ? 'Copied' : 'Copy'}
-                      </button>
-                    </div>
-                    <pre className="rounded-xl bg-slate-900 text-emerald-300 p-3 font-mono text-[11px] overflow-x-auto">
-                      {setup.cliCommand}
-                    </pre>
-                  </div>
-
-                  {/* Option 2: Paste Config Snippet */}
-                  <div className="bg-[#EFECE7] rounded-[20px] p-4 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="text-xs font-bold text-slate-800 block">
-                          Option 2: Paste {setup.format} into {setup.targetFile}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => copyText('remote-snippet', setup.snippet)}
-                        className="rounded-full bg-white hover:bg-[#4F46E5] hover:text-white text-slate-700 px-3 py-1 text-[11px] font-semibold flex items-center gap-1 shadow-sm saas-transition shrink-0"
-                      >
-                        {copiedKey === 'remote-snippet' ? (
-                          <Check className="w-3 h-3" />
-                        ) : (
-                          <Copy className="w-3 h-3" />
-                        )}
-                        {copiedKey === 'remote-snippet' ? 'Copied' : 'Copy'}
-                      </button>
-                    </div>
-                    <pre className="rounded-xl bg-white text-slate-800 p-3 font-mono text-[11px] overflow-x-auto shadow-sm">
-                      {setup.snippet}
-                    </pre>
-                  </div>
-                </div>
-
-                <div className="px-6 py-3.5 border-t border-slate-200/70 flex justify-end shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setRemoteSetupAgent(null)}
-                    className="rounded-full bg-slate-900 text-white px-5 py-2 text-xs font-semibold"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
     </div>
   );
 }

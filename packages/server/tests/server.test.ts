@@ -104,4 +104,31 @@ describe('@agent-colab/server', () => {
     );
     expect(expiredShare.status).toBe(401);
   });
+
+  it('auto-detects any connecting MCP client from initialize handshake and lists it in /api/agents', async () => {
+    const res = await app.request('/mcp?persona=work&tags=backend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          clientInfo: { name: 'future-ai-agent', version: '2.4.0' },
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const agentsRes = await app.request('/api/agents');
+    expect(agentsRes.status).toBe(200);
+    const { agents } = (await agentsRes.json()) as {
+      agents: Array<{ id: string; clientName: string; clientVersion?: string; persona?: string; tagScope?: string }>;
+    };
+    expect(agents).toHaveLength(1);
+    expect(agents[0].clientName).toBe('future-ai-agent');
+    expect(agents[0].clientVersion).toBe('2.4.0');
+    expect(agents[0].persona).toBe('work');
+    expect(agents[0].tagScope).toBe('backend');
+  });
 });

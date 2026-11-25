@@ -6,16 +6,12 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   buildContextPack,
+  syncSkillsDirectory,
   type CodingAccessMode,
   type TaskPriority,
   type TaskStatus,
   type VaultManager,
 } from '@agent-colab/core';
-import {
-  createAdapters,
-  type AdapterRegistryOptions,
-  type AgentAdapterId,
-} from '@agent-colab/adapters';
 import type { TunnelManager, TunnelProvider, TunnelScope } from '@agent-colab/tunnel';
 import { createMcpServer } from './mcp.js';
 
@@ -24,7 +20,6 @@ export interface CreateAppOptions {
   tunnel: TunnelManager;
   port: number;
   staticDir?: string;
-  adapterOptions?: AdapterRegistryOptions;
 }
 
 function isTunneledRequest(headers: Headers): boolean {
@@ -47,7 +42,7 @@ function extractToken(headers: Headers, queryToken?: string): string | undefined
 }
 
 export function createApp(options: CreateAppOptions): Hono {
-  const { vault, tunnel, port, staticDir, adapterOptions } = options;
+  const { vault, tunnel, port, staticDir } = options;
   const app = new Hono();
 
   app.use('*', cors());
@@ -90,7 +85,7 @@ export function createApp(options: CreateAppOptions): Hono {
     return c.text(pack, 200, { 'Content-Type': 'text/markdown; charset=utf-8' });
   });
 
-  // --- MCP Streamable HTTP Endpoint (/mcp) ---
+  // --- Universal MCP Streamable HTTP Endpoint (/mcp) with Auto-Client Detection ---
   app.all('/mcp', async (c) => {
     const viaTunnel = isTunneledRequest(c.req.raw.headers);
     let readOnly = false;
@@ -103,8 +98,24 @@ export function createApp(options: CreateAppOptions): Hono {
       readOnly = !tunnel.validateToken(token, 'read-write');
     }
 
-    const defaultAgent =
+    let body: unknown = undefined;
+    if (c.req.method === 'POST') {
+      try {
+        body = await c.req.json();
+      } catch {
+        body = undefined;
+      }
+    }
+
+    // Auto-detect connecting client from MCP initialize handshake (clientInfo) or query/headers
+    const rpcBody = body as
+      | { method?: string; params?: { clientInfo?: { name?: string; version?: string } } }
+      | undefined;
+    const handshakeName = rpcBody?.params?.clientInfo?.name?.trim();
+    const handshakeVersion = rpcBody?.params?.clientInfo?.version?.trim();
+    const explicitAgent =
       c.req.query('agent') || c.req.header('x-agent-identity') || undefined;
+    const userAgent = c.req.header('user-agent')?.split(/[\/\s]/)[0]?.trim();
     const persona =
       c.req.query('persona') || c.req.header('x-agent-persona') || undefined;
     const tagsRaw = c.req.query('tags') || c.req.header('x-agent-tags') || '';
@@ -112,10 +123,24 @@ export function createApp(options: CreateAppOptions): Hono {
       ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean)
       : undefined;
 
+    const detectedName = handshakeName || explicitAgent || userAgent || 'mcp-client';
+    const agentId = explicitAgent || detectedName;
+
+    if (c.req.method === 'POST' || explicitAgent || handshakeName) {
+      vault.recordConnectedAgent({
+        id: agentId,
+        clientName: handshakeName || detectedName,
+        clientVersion: handshakeVersion,
+        persona,
+        tagScope: allowedTags ? allowedTags.join(', ') : undefined,
+        via: viaTunnel ? 'tunnel' : 'mcp',
+      });
+    }
+
     const mcpServer = createMcpServer(vault, {
       readOnly,
       via: viaTunnel ? 'tunnel' : 'mcp',
-      defaultAgent,
+      defaultAgent: agentId,
       persona,
       allowedTags,
     });
@@ -127,18 +152,8 @@ export function createApp(options: CreateAppOptions): Hono {
 
     await mcpServer.connect(transport);
 
-    // Bridge Hono Request -> Node IncomingMessage/ServerResponse via Web-compatible handling
-    // Note: Hono's @hono/node-server exposes raw req/res on c.env.incoming / c.env.outgoing
     const env = c.env as { incoming?: unknown; outgoing?: unknown } | undefined;
     if (env?.incoming && env?.outgoing) {
-      let body: unknown = undefined;
-      if (c.req.method === 'POST') {
-        try {
-          body = await c.req.json();
-        } catch {
-          body = undefined;
-        }
-      }
       await transport.handleRequest(
         env.incoming as Parameters<typeof transport.handleRequest>[0],
         env.outgoing as Parameters<typeof transport.handleRequest>[1],
@@ -150,8 +165,9 @@ export function createApp(options: CreateAppOptions): Hono {
     return c.json({
       name: 'agent-colab-mcp',
       status: 'ready',
+      detectedClient: agentId,
       readOnly,
-      hint: 'Connect using an MCP Streamable HTTP client.',
+      hint: 'Connect any MCP-compatible AI agent to this universal Streamable HTTP endpoint.',
     });
   });
 
@@ -363,90 +379,43 @@ export function createApp(options: CreateAppOptions): Hono {
     return c.json({ logs: vault.getAuditLogs(limit) });
   });
 
-  // Adapters & Sync (Antigravity & Hermes)
-  app.get('/api/adapters', (c) => {
-    const adapters = createAdapters(adapterOptions);
-    return c.json({
-      adapters: Object.values(adapters).map((a) => a.detect()),
-    });
+  // Auto-Detected Connected Agents Registry & Generic Local Skills Sync
+  app.get('/api/agents', (c) => {
+    return c.json({ agents: vault.listConnectedAgents() });
   });
 
-  app.post('/api/sync', async (c) => {
+  app.delete('/api/agents/:id', (c) => {
+    const id = decodeURIComponent(c.req.param('id'));
+    const deleted = vault.removeConnectedAgent(id);
+    return c.json({ deleted });
+  });
+
+  app.post('/api/skills/sync-dir', async (c) => {
     const body = (await c.req.json()) as {
-      agent: AgentAdapterId;
+      dir: string;
       direction: 'import' | 'export';
       dryRun?: boolean;
-      hermesProfile?: string;
-      hermesHome?: string;
     };
-    const mergedAdapterOptions: AdapterRegistryOptions = {
-      ...adapterOptions,
-      hermes: {
-        ...adapterOptions?.hermes,
-        ...(body.hermesProfile ? { profile: body.hermesProfile } : {}),
-        ...(body.hermesHome ? { hermesHome: body.hermesHome } : {}),
-      },
-    };
-    const adapters = createAdapters(mergedAdapterOptions);
-    const adapter = adapters[body.agent];
-    if (!adapter) return c.json({ error: `Unknown agent adapter: ${body.agent}` }, 400);
-
-    const result =
-      body.direction === 'import'
-        ? adapter.importToVault(vault, { dryRun: body.dryRun })
-        : adapter.exportFromVault(vault, { dryRun: body.dryRun });
-
-    if (!body.dryRun) {
-      vault.logAudit({
-        actor: 'user',
-        action: `sync_${body.direction}`,
-        resource: `adapter:${body.agent}${body.hermesProfile ? `:${body.hermesProfile}` : ''}`,
-        via: 'web',
-        details: `${result.actions.length} item(s)`,
+    if (!body.dir?.trim()) {
+      return c.json({ error: 'Skills directory path is required.' }, 400);
+    }
+    try {
+      const result = syncSkillsDirectory(vault, body.dir, body.direction, {
+        dryRun: body.dryRun,
       });
+      if (!body.dryRun) {
+        vault.logAudit({
+          actor: 'user',
+          action: `skills_${body.direction}`,
+          resource: result.directory,
+          via: 'web',
+          details: `${result.actions.length} skill(s)`,
+        });
+      }
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
     }
-    return c.json(result);
-  });
-
-  app.post('/api/connect', async (c) => {
-    const body = (await c.req.json()) as {
-      agent: AgentAdapterId;
-      mode?: 'stdio' | 'http';
-      serverUrl?: string;
-      dryRun?: boolean;
-      force?: boolean;
-      hermesProfile?: string;
-      hermesHome?: string;
-    };
-    const mergedAdapterOptions: AdapterRegistryOptions = {
-      ...adapterOptions,
-      hermes: {
-        ...adapterOptions?.hermes,
-        ...(body.hermesProfile ? { profile: body.hermesProfile } : {}),
-        ...(body.hermesHome ? { hermesHome: body.hermesHome } : {}),
-      },
-    };
-    const adapters = createAdapters(mergedAdapterOptions);
-    const adapter = adapters[body.agent];
-    if (!adapter) return c.json({ error: `Unknown agent adapter: ${body.agent}` }, 400);
-
-    const detected = adapter.detect();
-    if (!detected.installed && !body.force && !body.dryRun) {
-      return c.json(
-        {
-          error: `${adapter.displayName} is not installed on this host machine. Use "Remote Setup" to copy the MCP config or CLI command for your local computer.`,
-        },
-        400
-      );
-    }
-
-    const result = adapter.connectAgentColab({
-      mode: body.mode ?? 'http',
-      serverUrl: body.serverUrl ?? `http://127.0.0.1:${port}/mcp`,
-      vaultPath: vault.vaultPath,
-      dryRun: body.dryRun,
-    });
-    return c.json(result);
   });
 
   // On-Demand Public Tunnel

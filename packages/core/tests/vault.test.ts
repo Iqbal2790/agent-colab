@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { VaultManager, buildContextPack, redactEnvRecord } from '../src/index.js';
+import { VaultManager, buildContextPack, redactEnvRecord, syncSkillsDirectory } from '../src/index.js';
 
 describe('@agent-colab/core', () => {
   let tmpDir: string;
@@ -149,5 +149,24 @@ describe('@agent-colab/core', () => {
 
     expect(vault.deletePersona('personal')).toBe(true);
     expect(vault.listPersonas()).toHaveLength(1);
+  });
+
+  it('syncs SKILL.md folders universally across any local directory', () => {
+    const srcDir = path.join(tmpDir, 'agent-a-skills');
+    const dstDir = path.join(tmpDir, 'agent-b-skills');
+    fs.mkdirSync(path.join(srcDir, 'my-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(srcDir, 'my-skill', 'SKILL.md'),
+      '---\nname: my-skill\ndescription: Universal skill\n---\n# Body\n',
+      'utf8'
+    );
+
+    const imported = syncSkillsDirectory(vault, srcDir, 'import');
+    expect(imported.actions).toHaveLength(1);
+    expect(vault.listSkills()).toHaveLength(1);
+
+    const exported = syncSkillsDirectory(vault, dstDir, 'export');
+    expect(exported.actions).toHaveLength(1);
+    expect(fs.existsSync(path.join(dstDir, 'my-skill', 'SKILL.md'))).toBe(true);
   });
 });

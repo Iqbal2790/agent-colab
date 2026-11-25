@@ -12,12 +12,12 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "build": "npm run build -w @agent-colab/core && npm run build -w @agent-colab/adapters && npm run build -w @agent-colab/tunnel && npm run build -w @agent-colab/server && npm run build -w @agent-colab/cli && npm run build -w @agent-colab/web",
+    "build": "npm run build -w @agent-colab/core && npm run build -w @agent-colab/tunnel && npm run build -w @agent-colab/server && npm run build -w @agent-colab/cli && npm run build -w @agent-colab/web",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev:server": "npm run dev -w @agent-colab/server",
     "dev:web": "npm run dev -w @agent-colab/web",
-    "typecheck": "tsc -b packages/core packages/adapters packages/tunnel packages/server packages/cli"
+    "typecheck": "tsc -b packages/core packages/tunnel packages/server packages/cli"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
