@@ -115,7 +115,6 @@ export function createApp(options: CreateAppOptions): Hono {
     const handshakeVersion = rpcBody?.params?.clientInfo?.version?.trim();
     const explicitAgent =
       c.req.query('agent') || c.req.header('x-agent-identity') || undefined;
-    const userAgent = c.req.header('user-agent')?.split(/[\/\s]/)[0]?.trim();
     const persona =
       c.req.query('persona') || c.req.header('x-agent-persona') || undefined;
     const tagsRaw = c.req.query('tags') || c.req.header('x-agent-tags') || '';
@@ -123,13 +122,17 @@ export function createApp(options: CreateAppOptions): Hono {
       ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean)
       : undefined;
 
-    const detectedName = handshakeName || explicitAgent || userAgent || 'mcp-client';
-    const agentId = explicitAgent || detectedName;
+    const detectedName = handshakeName || explicitAgent || 'mcp-client';
+    const agentId = explicitAgent || handshakeName || undefined;
 
-    if (c.req.method === 'POST' || explicitAgent || handshakeName) {
+    // Only register/update connected_agents when we have an explicit ?agent= identity
+    // or a real MCP initialize handshake (params.clientInfo.name) — never create ghost
+    // entries from generic HTTP User-Agent headers like "curl", "node", or "undici" on
+    // follow-up tools/list or tools/call requests.
+    if (agentId) {
       vault.recordConnectedAgent({
         id: agentId,
-        clientName: handshakeName || detectedName,
+        clientName: handshakeName || explicitAgent || detectedName,
         clientVersion: handshakeVersion,
         persona,
         tagScope: allowedTags ? allowedTags.join(', ') : undefined,
@@ -140,7 +143,7 @@ export function createApp(options: CreateAppOptions): Hono {
     const mcpServer = createMcpServer(vault, {
       readOnly,
       via: viaTunnel ? 'tunnel' : 'mcp',
-      defaultAgent: agentId,
+      defaultAgent: agentId ?? 'mcp-client',
       persona,
       allowedTags,
     });
