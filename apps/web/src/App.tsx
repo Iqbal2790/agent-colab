@@ -474,10 +474,29 @@ export default function App() {
     }
   }
 
-  function copyText(key: string, text: string) {
-    void navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(''), 2000);
+  async function copyText(key: string, text: string) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (!ok) throw new Error('Clipboard copy failed');
+      }
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(''), 2000);
+    } catch {
+      fail('Browser blocked automatic copy — please select and press Ctrl+C.');
+    }
   }
 
   function downloadMarkdown(filename: string, content: string) {
